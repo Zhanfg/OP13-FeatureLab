@@ -68,7 +68,6 @@ class AuditReport:
 
 def _serialize_element(element: ET.Element) -> str:
     """Return a formatting-independent semantic representation."""
-
     def canonical(node: ET.Element) -> object:
         return {
             "tag": node.tag if isinstance(node.tag, str) else "#comment",
@@ -81,7 +80,8 @@ def _serialize_element(element: ET.Element) -> str:
 
 
 def _semantic_text(element: ET.Element) -> str:
-    parts = [element.tag]
+    tag = element.tag if isinstance(element.tag, str) else "#comment"
+    parts = [tag]
     for key, value in sorted(element.attrib.items()):
         parts.extend((key, value))
     if element.text:
@@ -256,7 +256,7 @@ def audit_trees(
             manifests["generated"][f"/{relative.as_posix()}"] = sha256_file(generated)
 
         absolute = f"/{relative.as_posix()}"
-        if any(absolute.startswith(prefix) for prefix in PROTECTED_PATH_PATTERNS):
+        if generated.is_file() and any(absolute.startswith(prefix) for prefix in PROTECTED_PATH_PATTERNS):
             findings.append(Finding("blocker", "PROTECTED_PATH_PRESENT", absolute, "Protected credential path is present."))
 
         if not baseline.is_file() or not generated.is_file():
@@ -312,18 +312,11 @@ def _audit_property_file(relative: Path, generated: Path, findings: list[Finding
     target = f"/{relative.as_posix()}"
     _, duplicates, malformed = _parse_properties(generated)
     if duplicates:
-        findings.append(
-            Finding("blocker", "DUPLICATE_PROPERTY_KEYS", target, "Duplicate property keys found.", {"keys": duplicates})
-        )
+        findings.append(Finding("blocker", "DUPLICATE_PROPERTY_KEYS", target, "Duplicate property keys found.", {"keys": duplicates}))
     if malformed:
-        findings.append(
-            Finding("blocker", "MALFORMED_PROPERTY_LINES", target, "Malformed property lines found.", {"lines": malformed})
-        )
+        findings.append(Finding("blocker", "MALFORMED_PROPERTY_LINES", target, "Malformed property lines found.", {"lines": malformed}))
 
 
 def write_report(report: AuditReport, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    path.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
