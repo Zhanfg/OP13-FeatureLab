@@ -76,6 +76,7 @@ fl_platform_remount_ro() {
 fl_platform_unmount() { umount "$1"; }
 
 FL_LOCK_TOKEN=''
+FL_LOCK_PATH=''
 
 fl_lock_owner_is_alive() {
     _owner="$1" _current_boot="$2"
@@ -100,6 +101,7 @@ fl_acquire_lock() {
             umask 077
             printf '%s\n' "$_token" > "$_lock/owner" || { rm -rf "$_lock"; return 1; }
             FL_LOCK_TOKEN="$_token"
+            FL_LOCK_PATH="$_lock"
             return 0
         fi
 
@@ -128,4 +130,10 @@ fl_release_lock() {
         rm -rf "$_lock" 2>/dev/null || true
     fi
     FL_LOCK_TOKEN=''
+    FL_LOCK_PATH=''
+}
+
+fl_release_held_lock() {
+    [ -n "$FL_LOCK_PATH" ] || return 0
+    fl_release_lock "$FL_LOCK_PATH"
 }

@@ -48,6 +48,23 @@ fl_discard_previous_boot_pointers() {
         "discarded-previous-boot-transaction $FL_COMMIT_BOOT_ID $_current_boot $(fl_now)"
 }
 
+fl_next_transaction_id() {
+    _state="$1" _boot="$2" _sequence_file="$_state/tx-sequence"
+    _stored_boot=''
+    _stored_sequence='0'
+    if [ -f "$_sequence_file" ]; then
+        IFS=' ' read -r _stored_boot _stored_sequence _extra < "$_sequence_file" || true
+    fi
+    case "$_stored_sequence" in ''|*[!0-9]*) _stored_sequence=0 ;; esac
+    if [ "$_stored_boot" = "$_boot" ] && [ -z "${_extra:-}" ]; then
+        _next=$((_stored_sequence + 1))
+    else
+        _next=1
+    fi
+    fl_atomic_write "$_sequence_file" "$_boot $_next" || return 1
+    FL_TRANSACTION_ID="$_boot-$_next-$$"
+}
+
 fl_rollback_journal() {
     _journal="$1" _state="$2" _reverse="${1}.reverse.$$" _failed=0
     fl_reverse_journal "$_journal" "$_reverse" || return 1
@@ -93,7 +110,7 @@ fl_verify_active() {
 }
 
 fl_finish_locked() {
-    fl_release_lock "$1"
+    fl_release_held_lock
     trap - EXIT INT TERM HUP
 }
 
@@ -101,33 +118,35 @@ fl_apply_plan() {
     _plan="$1" _moddir="$2" _state="$3" _lock="$3/transaction.lock"
     mkdir -p "$_state" || return 1
     fl_acquire_lock "$_lock" || { fl_error "another mount transaction is active"; return 1; }
-    trap 'fl_release_lock "$_lock"' EXIT INT TERM HUP
+    trap 'fl_release_held_lock' EXIT INT TERM HUP
 
-    [ ! -f "$_state/recovery.flag" ] || { fl_error "recovery mode is active"; fl_finish_locked "$_lock"; return 1; }
-    fl_platform_assert_global_namespace || { fl_error "mount namespace does not match PID 1"; fl_finish_locked "$_lock"; return 1; }
+    [ ! -f "$_state/recovery.flag" ] || { fl_error "recovery mode is active"; fl_finish_locked; return 1; }
+    fl_platform_assert_global_namespace || { fl_error "mount namespace does not match PID 1"; fl_finish_locked; return 1; }
     current_boot="$(fl_platform_boot_id 2>/dev/null)" || current_boot=''
-    [ -n "$current_boot" ] || { fl_error "cannot identify current boot"; fl_finish_locked "$_lock"; return 1; }
+    [ -n "$current_boot" ] || { fl_error "cannot identify current boot"; fl_finish_locked; return 1; }
 
     if [ -f "$_state/commit" ] || [ -f "$_state/active-journal" ]; then
         fl_discard_previous_boot_pointers "$_state" "$current_boot" || true
     fi
     if [ -f "$_state/commit" ] || [ -f "$_state/active-journal" ]; then
         if fl_verify_active "$_state" "$_plan"; then
-            fl_finish_locked "$_lock"
+            fl_finish_locked
             return 0
         fi
         fl_error "active transaction is inconsistent or uses a different plan"
         fl_atomic_write "$_state/recovery.flag" "active-transaction-inconsistent $(fl_now)"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 1
     fi
 
-    tx="$(fl_now)-$$" normalized="$_state/preflight-$tx.tsv" journal="$_state/transaction-$tx.tsv"
-    : > "$journal" || { fl_finish_locked "$_lock"; return 1; }
+    fl_next_transaction_id "$_state" "$current_boot" \
+        || { fl_error "cannot allocate transaction ID"; fl_finish_locked; return 1; }
+    tx="$FL_TRANSACTION_ID" normalized="$_state/preflight-$tx.tsv" journal="$_state/transaction-$tx.tsv"
+    : > "$journal" || { fl_finish_locked; return 1; }
     if ! fl_preflight_plan "$_plan" "$_moddir" "$normalized"; then
         fl_atomic_write "$_state/last-error" "preflight-failed $tx"
         rm -f "$normalized"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 1
     fi
 
@@ -170,67 +189,80 @@ EOF_ID
     done < "$normalized"
 
     if [ "$failed" -ne 0 ]; then
-        if fl_rollback_journal "$journal" "$_state"; then
+        rollback_ok=0
+        fl_rollback_journal "$journal" "$_state" && rollback_ok=1
+        if [ -f "$_state/recovery.flag" ]; then
+            fl_atomic_write "$_state/last-error" "apply-failed-recovery-required $tx"
+        elif [ "$rollback_ok" -eq 1 ]; then
             fl_atomic_write "$_state/last-error" "apply-failed-rolled-back $tx"
         else
             fl_atomic_write "$_state/last-error" "apply-failed-rollback-incomplete $tx"
         fi
         rm -f "$normalized"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 1
     fi
 
     if ! fl_atomic_write "$_state/active-journal" "$journal"; then
         fl_rollback_journal "$journal" "$_state" || true
         rm -f "$_state/active-journal" "$_state/commit"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 1
     fi
     plan_sha="$(fl_hash_file "$_plan")" || plan_sha=''
     if [ -z "$plan_sha" ] || ! fl_atomic_write "$_state/commit" "$tx $(fl_now) $plan_sha $current_boot"; then
         fl_rollback_journal "$journal" "$_state" || true
         rm -f "$_state/active-journal" "$_state/commit"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 1
     fi
     rm -f "$normalized" "$_state/last-error"
-    fl_finish_locked "$_lock"
+    fl_finish_locked
 }
 
 fl_detach_active() {
     _state="$1" _lock="$_state/transaction.lock"
     mkdir -p "$_state" || return 1
     fl_acquire_lock "$_lock" || { fl_error "another mount transaction is active"; return 1; }
-    trap 'fl_release_lock "$_lock"' EXIT INT TERM HUP
+    trap 'fl_release_held_lock' EXIT INT TERM HUP
     current_boot="$(fl_platform_boot_id 2>/dev/null)" || current_boot=''
+    [ -n "$current_boot" ] || { fl_error "cannot identify current boot"; fl_finish_locked; return 1; }
 
     if [ ! -f "$_state/active-journal" ]; then
-        if [ -n "$current_boot" ]; then
-            fl_discard_previous_boot_pointers "$_state" "$current_boot" || true
+        if [ ! -f "$_state/commit" ]; then
+            fl_finish_locked
+            return 0
         fi
-        fl_finish_locked "$_lock"
-        return 0
+        if fl_discard_previous_boot_pointers "$_state" "$current_boot"; then
+            fl_finish_locked
+            return 0
+        fi
+        fl_error "orphan current-boot commit without active journal"
+        fl_atomic_write "$_state/recovery.flag" "orphan-current-boot-commit $(fl_now)"
+        fl_finish_locked
+        return 1
     fi
 
-    if [ -n "$current_boot" ] && fl_discard_previous_boot_pointers "$_state" "$current_boot"; then
-        fl_finish_locked "$_lock"
+    if fl_discard_previous_boot_pointers "$_state" "$current_boot"; then
+        fl_finish_locked
         return 0
     fi
-    fl_platform_assert_global_namespace || { fl_error "mount namespace does not match PID 1"; fl_finish_locked "$_lock"; return 1; }
-    fl_load_active_journal "$_state" || { fl_error "active journal missing or invalid"; fl_finish_locked "$_lock"; return 1; }
+    fl_platform_assert_global_namespace || { fl_error "mount namespace does not match PID 1"; fl_finish_locked; return 1; }
+    fl_load_active_journal "$_state" || { fl_error "active journal missing or invalid"; fl_finish_locked; return 1; }
     if fl_rollback_journal "$FL_ACTIVE_JOURNAL" "$_state"; then
         rm -f "$_state/active-journal" "$_state/commit"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 0
     fi
-    fl_finish_locked "$_lock"
+    fl_finish_locked
     return 1
 }
 
 fl_boot_guard_begin() {
     _state="$1"
     mkdir -p "$_state" || return 1
-    boot_id="$(fl_platform_boot_id 2>/dev/null || printf 'unknown-%s' "$$")"
+    boot_id="$(fl_platform_boot_id 2>/dev/null)" || return 1
+    [ -n "$boot_id" ] || return 1
     previous="$(cat "$_state/boot-in-progress" 2>/dev/null || true)"
     failures="$(cat "$_state/boot-failures" 2>/dev/null || printf 0)"
     case "$failures" in *[!0-9]*|'') failures=0 ;; esac
@@ -254,19 +286,19 @@ fl_boot_guard_complete_verified() {
     _state="$1" _plan="$2" _lock="$_state/transaction.lock"
     mkdir -p "$_state" || return 1
     fl_acquire_lock "$_lock" || { fl_error "another mount transaction is active"; return 1; }
-    trap 'fl_release_lock "$_lock"' EXIT INT TERM HUP
+    trap 'fl_release_held_lock' EXIT INT TERM HUP
 
     if [ -f "$_state/recovery.flag" ]; then
         fl_boot_guard_complete "$_state"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 0
     fi
     if fl_verify_active "$_state" "$_plan"; then
         fl_boot_guard_complete "$_state"
-        fl_finish_locked "$_lock"
+        fl_finish_locked
         return 0
     fi
     fl_atomic_write "$_state/last-error" "boot-complete-without-verified-transaction $(fl_now)"
-    fl_finish_locked "$_lock"
+    fl_finish_locked
     return 1
 }
