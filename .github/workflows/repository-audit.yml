@@ -47,4 +47,7 @@ jobs:
           PYTHONPATH=src python3 -m compileall -q src tests
 
       - name: Run transactional mount fault-injection tests
-        run: sh tests/runtime/test_mount_transaction.sh
+        run: |
+          for test_script in tests/runtime/test_*.sh; do
+            sh "$test_script"
+          done

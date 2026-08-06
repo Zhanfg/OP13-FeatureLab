@@ -75,9 +75,57 @@ fl_platform_remount_ro() {
 }
 fl_platform_unmount() { umount "$1"; }
 
-fl_acquire_lock() {
-    mkdir -p "${1%/*}" || return 1
-    mkdir "$1" 2>/dev/null || return 1
-    printf '%s\n' "$$" > "$1/pid"
+FL_LOCK_TOKEN=''
+
+fl_lock_owner_is_alive() {
+    _owner="$1" _current_boot="$2"
+    _owner_boot="${_owner%%:*}"
+    _owner_rest="${_owner#*:}"
+    [ "$_owner_rest" != "$_owner" ] || return 1
+    _owner_pid="${_owner_rest%%:*}"
+    [ "$_owner_boot" = "$_current_boot" ] || return 1
+    case "$_owner_pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$_owner_pid" 2>/dev/null
 }
-fl_release_lock() { rm -rf "$1" 2>/dev/null || true; }
+
+fl_acquire_lock() {
+    _lock="$1"
+    mkdir -p "${_lock%/*}" || return 1
+    _boot="$(fl_platform_boot_id 2>/dev/null)" || return 1
+    [ -n "$_boot" ] || return 1
+    _token="$_boot:$$:$(fl_now)"
+    _attempt=0
+    while [ "$_attempt" -lt 3 ]; do
+        if mkdir "$_lock" 2>/dev/null; then
+            umask 077
+            printf '%s\n' "$_token" > "$_lock/owner" || { rm -rf "$_lock"; return 1; }
+            FL_LOCK_TOKEN="$_token"
+            return 0
+        fi
+
+        _owner="$(cat "$_lock/owner" 2>/dev/null || true)"
+        if [ -z "$_owner" ]; then
+            sleep 1
+            _owner="$(cat "$_lock/owner" 2>/dev/null || true)"
+        fi
+        fl_lock_owner_is_alive "$_owner" "$_boot" && return 1
+
+        _stale="${_lock}.stale.$$.$_attempt"
+        if mv "$_lock" "$_stale" 2>/dev/null; then
+            rm -rf "$_stale"
+            _attempt=$((_attempt + 1))
+            continue
+        fi
+        return 1
+    done
+    return 1
+}
+
+fl_release_lock() {
+    _lock="$1"
+    _owner="$(cat "$_lock/owner" 2>/dev/null || true)"
+    if [ -n "$FL_LOCK_TOKEN" ] && [ "$_owner" = "$FL_LOCK_TOKEN" ]; then
+        rm -rf "$_lock" 2>/dev/null || true
+    fi
+    FL_LOCK_TOKEN=''
+}

@@ -25,7 +25,7 @@ case "$command_name" in
         fl_detach_active "$STATE_DIR"
         ;;
     boot-complete)
-        fl_boot_guard_complete "$STATE_DIR"
+        fl_boot_guard_complete_verified "$STATE_DIR" "$PLAN"
         ;;
     recovery-on)
         fl_atomic_write "$STATE_DIR/recovery.flag" "manual $(fl_now)"

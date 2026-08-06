@@ -15,6 +15,39 @@ fl_unmount_if_owned_id() {
     fl_platform_unmount "$1"
 }
 
+fl_load_commit() {
+    _commit="$1"
+    FL_COMMIT_TX=''
+    FL_COMMIT_TIME=''
+    FL_COMMIT_PLAN_SHA=''
+    FL_COMMIT_BOOT_ID=''
+    [ -f "$_commit" ] || return 1
+    IFS=' ' read -r FL_COMMIT_TX FL_COMMIT_TIME FL_COMMIT_PLAN_SHA FL_COMMIT_BOOT_ID _extra < "$_commit" || return 1
+    [ -n "$FL_COMMIT_TX" ] && [ -n "$FL_COMMIT_TIME" ] \
+        && [ -n "$FL_COMMIT_PLAN_SHA" ] && [ -n "$FL_COMMIT_BOOT_ID" ] \
+        && [ -z "${_extra:-}" ]
+}
+
+fl_load_active_journal() {
+    _state="$1"
+    FL_ACTIVE_JOURNAL=''
+    [ -f "$_state/active-journal" ] || return 1
+    FL_ACTIVE_JOURNAL="$(cat "$_state/active-journal" 2>/dev/null)"
+    case "$FL_ACTIVE_JOURNAL" in
+        "$_state"/transaction-*.tsv) [ -f "$FL_ACTIVE_JOURNAL" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+fl_discard_previous_boot_pointers() {
+    _state="$1" _current_boot="$2"
+    fl_load_commit "$_state/commit" || return 1
+    [ "$FL_COMMIT_BOOT_ID" != "$_current_boot" ] || return 1
+    rm -f "$_state/active-journal" "$_state/commit"
+    fl_atomic_write "$_state/last-event" \
+        "discarded-previous-boot-transaction $FL_COMMIT_BOOT_ID $_current_boot $(fl_now)"
+}
+
 fl_rollback_journal() {
     _journal="$1" _state="$2" _reverse="${1}.reverse.$$" _failed=0
     fl_reverse_journal "$_journal" "$_reverse" || return 1
@@ -43,12 +76,12 @@ fl_rollback_journal() {
 
 fl_verify_active() {
     _state="$1" _plan="$2"
-    [ -f "$_state/commit" ] && [ -f "$_state/active-journal" ] || return 1
-    journal="$(cat "$_state/active-journal" 2>/dev/null)"
-    [ -f "$journal" ] || return 1
-    set -- $(cat "$_state/commit" 2>/dev/null)
-    [ "$#" -eq 3 ] || return 1
-    [ "$(fl_hash_file "$_plan" 2>/dev/null || true)" = "$3" ] || return 1
+    fl_load_commit "$_state/commit" || return 1
+    _current_boot="$(fl_platform_boot_id 2>/dev/null)" || return 1
+    [ -n "$_current_boot" ] && [ "$FL_COMMIT_BOOT_ID" = "$_current_boot" ] || return 1
+    [ "$(fl_hash_file "$_plan" 2>/dev/null || true)" = "$FL_COMMIT_PLAN_SHA" ] || return 1
+    fl_load_active_journal "$_state" || return 1
+
     while IFS="$FL_TAB" read -r status tx seq feature source target source_sha baseline_sha \
         pre_id created_id parent device root mount_source fstype extra; do
         [ "$status" = MOUNTED ] || continue
@@ -56,7 +89,7 @@ fl_verify_active() {
         [ "$(fl_platform_visible_mount_id "$target" 2>/dev/null || true)" = "$created_id" ] || return 1
         [ "$(fl_hash_file "$target" 2>/dev/null || true)" = "$source_sha" ] || return 1
         fl_platform_mount_is_ro "$created_id" || return 1
-    done < "$journal"
+    done < "$FL_ACTIVE_JOURNAL"
 }
 
 fl_finish_locked() {
@@ -72,9 +105,17 @@ fl_apply_plan() {
 
     [ ! -f "$_state/recovery.flag" ] || { fl_error "recovery mode is active"; fl_finish_locked "$_lock"; return 1; }
     fl_platform_assert_global_namespace || { fl_error "mount namespace does not match PID 1"; fl_finish_locked "$_lock"; return 1; }
+    current_boot="$(fl_platform_boot_id 2>/dev/null)" || current_boot=''
+    [ -n "$current_boot" ] || { fl_error "cannot identify current boot"; fl_finish_locked "$_lock"; return 1; }
 
     if [ -f "$_state/commit" ] || [ -f "$_state/active-journal" ]; then
-        if fl_verify_active "$_state" "$_plan"; then fl_finish_locked "$_lock"; return 0; fi
+        fl_discard_previous_boot_pointers "$_state" "$current_boot" || true
+    fi
+    if [ -f "$_state/commit" ] || [ -f "$_state/active-journal" ]; then
+        if fl_verify_active "$_state" "$_plan"; then
+            fl_finish_locked "$_lock"
+            return 0
+        fi
         fl_error "active transaction is inconsistent or uses a different plan"
         fl_atomic_write "$_state/recovery.flag" "active-transaction-inconsistent $(fl_now)"
         fl_finish_locked "$_lock"
@@ -146,7 +187,7 @@ EOF_ID
         return 1
     fi
     plan_sha="$(fl_hash_file "$_plan")" || plan_sha=''
-    if [ -z "$plan_sha" ] || ! fl_atomic_write "$_state/commit" "$tx $(fl_now) $plan_sha"; then
+    if [ -z "$plan_sha" ] || ! fl_atomic_write "$_state/commit" "$tx $(fl_now) $plan_sha $current_boot"; then
         fl_rollback_journal "$journal" "$_state" || true
         rm -f "$_state/active-journal" "$_state/commit"
         fl_finish_locked "$_lock"
@@ -157,31 +198,45 @@ EOF_ID
 }
 
 fl_detach_active() {
-    _state="$1" active="$_state/active-journal"
-    [ -f "$active" ] || return 0
-    journal="$(cat "$active" 2>/dev/null)"
-    [ -f "$journal" ] || { fl_error "active journal missing"; return 1; }
-    fl_platform_assert_global_namespace || { fl_error "mount namespace does not match PID 1"; return 1; }
-    lock="$_state/transaction.lock"
-    fl_acquire_lock "$lock" || { fl_error "another mount transaction is active"; return 1; }
-    trap 'fl_release_lock "$lock"' EXIT INT TERM HUP
-    if fl_rollback_journal "$journal" "$_state"; then
-        rm -f "$active" "$_state/commit"
-        fl_finish_locked "$lock"
+    _state="$1" _lock="$_state/transaction.lock"
+    mkdir -p "$_state" || return 1
+    fl_acquire_lock "$_lock" || { fl_error "another mount transaction is active"; return 1; }
+    trap 'fl_release_lock "$_lock"' EXIT INT TERM HUP
+    current_boot="$(fl_platform_boot_id 2>/dev/null)" || current_boot=''
+
+    if [ ! -f "$_state/active-journal" ]; then
+        if [ -n "$current_boot" ]; then
+            fl_discard_previous_boot_pointers "$_state" "$current_boot" || true
+        fi
+        fl_finish_locked "$_lock"
         return 0
     fi
-    fl_finish_locked "$lock"
+
+    if [ -n "$current_boot" ] && fl_discard_previous_boot_pointers "$_state" "$current_boot"; then
+        fl_finish_locked "$_lock"
+        return 0
+    fi
+    fl_platform_assert_global_namespace || { fl_error "mount namespace does not match PID 1"; fl_finish_locked "$_lock"; return 1; }
+    fl_load_active_journal "$_state" || { fl_error "active journal missing or invalid"; fl_finish_locked "$_lock"; return 1; }
+    if fl_rollback_journal "$FL_ACTIVE_JOURNAL" "$_state"; then
+        rm -f "$_state/active-journal" "$_state/commit"
+        fl_finish_locked "$_lock"
+        return 0
+    fi
+    fl_finish_locked "$_lock"
     return 1
 }
 
 fl_boot_guard_begin() {
-    _state="$1"; mkdir -p "$_state" || return 1
+    _state="$1"
+    mkdir -p "$_state" || return 1
     boot_id="$(fl_platform_boot_id 2>/dev/null || printf 'unknown-%s' "$$")"
     previous="$(cat "$_state/boot-in-progress" 2>/dev/null || true)"
     failures="$(cat "$_state/boot-failures" 2>/dev/null || printf 0)"
     case "$failures" in *[!0-9]*|'') failures=0 ;; esac
     if [ -n "$previous" ] && [ "$previous" != "$boot_id" ]; then
-        failures=$((failures + 1)); fl_atomic_write "$_state/boot-failures" "$failures"
+        failures=$((failures + 1))
+        fl_atomic_write "$_state/boot-failures" "$failures"
     fi
     if [ "$failures" -ge 2 ]; then
         fl_atomic_write "$_state/recovery.flag" "consecutive-incomplete-boots $failures"
@@ -193,4 +248,25 @@ fl_boot_guard_begin() {
 fl_boot_guard_complete() {
     rm -f "$1/boot-in-progress" "$1/boot-failures"
     fl_atomic_write "$1/last-boot-success" "$(fl_now)"
+}
+
+fl_boot_guard_complete_verified() {
+    _state="$1" _plan="$2" _lock="$_state/transaction.lock"
+    mkdir -p "$_state" || return 1
+    fl_acquire_lock "$_lock" || { fl_error "another mount transaction is active"; return 1; }
+    trap 'fl_release_lock "$_lock"' EXIT INT TERM HUP
+
+    if [ -f "$_state/recovery.flag" ]; then
+        fl_boot_guard_complete "$_state"
+        fl_finish_locked "$_lock"
+        return 0
+    fi
+    if fl_verify_active "$_state" "$_plan"; then
+        fl_boot_guard_complete "$_state"
+        fl_finish_locked "$_lock"
+        return 0
+    fi
+    fl_atomic_write "$_state/last-error" "boot-complete-without-verified-transaction $(fl_now)"
+    fl_finish_locked "$_lock"
+    return 1
 }
