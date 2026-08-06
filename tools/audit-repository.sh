@@ -32,15 +32,30 @@ if find . -type f \
   fail "prohibited firmware/binary files found"
 fi
 
-note "rejecting credential and secret paths in tracked source"
+note "rejecting credential and secret paths in executable source"
 SENSITIVE_PATTERN='/data/system/locksettings|/data/system/spblob|/data/misc/gatekeeper|/data/vendor/weaver|/metadata/vold|/data/unencrypted'
+# The centralized denylist and synthetic regression tests must name protected paths.
+# All other executable/configuration source remains prohibited from referencing them.
 if git grep -nE "$SENSITIVE_PATTERN" -- . \
-  ':!SECURITY.md' ':!README.md' ':!docs/**' ':!tools/audit-repository.sh' >/tmp/op13-sensitive.$$ 2>/dev/null; then
+  ':!SECURITY.md' ':!README.md' ':!docs/**' ':!tools/audit-repository.sh' \
+  ':!src/featurelab/audit.py' ':!tests/**' >/tmp/op13-sensitive.$$ 2>/dev/null; then
   cat /tmp/op13-sensitive.$$
   rm -f /tmp/op13-sensitive.$$
-  fail "sensitive paths used outside policy/documentation files"
+  fail "sensitive paths used outside the centralized guard or regression tests"
 fi
 rm -f /tmp/op13-sensitive.$$
+
+note "verifying centralized protected-path registry"
+for protected in \
+  '/data/system/locksettings' \
+  '/data/system/spblob/' \
+  '/data/misc/gatekeeper/' \
+  '/data/vendor/weaver/' \
+  '/metadata/vold/' \
+  '/data/unencrypted/'; do
+  grep -Fq "$protected" src/featurelab/audit.py \
+    || fail "centralized protected-path registry is missing: $protected"
+done
 
 note "rejecting release WebUI mock-success fallback"
 if [ -d src/webui ]; then
