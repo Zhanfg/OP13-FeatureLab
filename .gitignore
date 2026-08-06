@@ -1,0 +1,51 @@
+# Device-derived and proprietary material
+payload/
+extracted/
+vendor-baseline/
+device-dumps/
+generated-release/
+local-build/
+
+# Firmware and binary packages
+*.img
+*.bin
+*.mbn
+*.elf
+*.apk
+*.apex
+*.jar
+*.dex
+*.so
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+*.tar.zst
+
+# Device and runtime state
+state/
+logs/
+reports/private/
+*.log
+*.pid
+*.lock
+*.bak
+
+# Local configuration
+.env
+.env.*
+config.local.*
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+build/
+coverage/
+node_modules/
+__pycache__/
+*.pyc

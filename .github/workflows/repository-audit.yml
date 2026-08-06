@@ -1,0 +1,42 @@
+name: repository-audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run repository policy audit
+        run: sh tools/audit-repository.sh
+
+      - name: Validate feature schema examples
+        run: |
+          python3 -m pip install --disable-pip-version-check jsonschema
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          schema = json.loads(Path('schemas/feature.schema.json').read_text())
+          catalog = json.loads(Path('config/feature-catalog.example.json').read_text())
+          validator = Draft202012Validator(schema)
+          errors = []
+          for index, feature in enumerate(catalog):
+              for error in validator.iter_errors(feature):
+                  errors.append(f'feature[{index}] {error.json_path}: {error.message}')
+          if errors:
+              raise SystemExit('\n'.join(errors))
+          print(f'validated {len(catalog)} feature definition(s)')
+          PY

@@ -1,0 +1,40 @@
+[
+  {
+    "id": "display.hdr.unrestricted_apps",
+    "title": "Extended HDR application eligibility",
+    "description": "Extends the supported application set through a structural selector without replacing unrelated display policy.",
+    "category": "display",
+    "channel": "lab",
+    "risk": "medium",
+    "default_enabled": false,
+    "evidence": {
+      "state": "consumer_found",
+      "notes": "A display consumer for the target configuration must be confirmed on the local build.",
+      "probes": [
+        "service:SurfaceFlinger",
+        "file:/my_product/vendor/etc/multimedia_display_feature_config.xml"
+      ]
+    },
+    "dependencies": [],
+    "conflicts": [],
+    "activation_stage": "post-mount",
+    "operations": [
+      {
+        "type": "list_append",
+        "target": "/my_product/vendor/etc/multimedia_display_feature_config.xml",
+        "selector": "feature[name=HdrGeneric]/supportApp",
+        "value": "${USER_SELECTED_PACKAGE}",
+        "preserve_unrelated": true
+      }
+    ],
+    "protected_domains": ["credentials", "keyguard", "privacy_password", "camera_boundary"],
+    "binary_search_bucket": "display-a",
+    "rollback": {
+      "strategy": "baseline_restore",
+      "verify": [
+        "target hash matches recorded baseline",
+        "top mount identity belongs to OP13 FeatureLab"
+      ]
+    }
+  }
+]
