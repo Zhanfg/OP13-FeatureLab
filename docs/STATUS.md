@@ -34,9 +34,10 @@
 
 - [ ] Read baseline files from the user's device
 - [ ] Verify supported build and baseline compatibility
-- [ ] Apply structural patch operations
-- [ ] Preserve ownership, mode and SELinux metadata
-- [ ] Generate payload without committing vendor files
+- [x] Apply structural XML/property patch operations
+- [x] Record source ownership/mode/SELinux metadata where available
+- [x] Generate a sparse payload without committing vendor files
+- [x] Create deterministic SHA-256 generation manifests
 
 ### M2 — Transactional runtime
 
@@ -49,10 +50,13 @@
 
 ### M3 — Semantic safety
 
-- [ ] Protected window-policy subtree comparison
-- [ ] LockSettings/Keyguard/privacy-password guard
-- [ ] Privileged-permission no-removal rule
-- [ ] Camera/face/biometric boundary guard
+- [x] Protected credential/privacy/Keyguard/fingerprint semantic comparison
+- [x] Privileged-permission no-removal rule and addition ledger
+- [x] Camera/face/biometric boundary guard
+- [x] Keyed top-level policy-record loss detection
+- [x] Duplicate and malformed property detection
+- [ ] Validate the complete historical v0.4 payload with the new auditor
+- [ ] Expand protected selectors against additional real-device baselines
 - [ ] Stable/Lab default-policy separation
 
 ### M4 — WebUI
