@@ -25,6 +25,8 @@ REPORT_NAME="OP13_FeatureLab_Preflight_${FL_TIMESTAMP}"
 WORK="${FL_TMP_ROOT%/}/${REPORT_NAME}"
 ARCHIVE="${FL_OUTPUT_DIR%/}/${REPORT_NAME}.tar.gz"
 ARCHIVE_SHA="${ARCHIVE}.sha256"
+ARCHIVE_TMP=''
+ARCHIVE_SHA_TMP=''
 COMMAND_STATUS=''
 KSUD_BIN=''
 IDENTITY_STATUS='UNKNOWN'
@@ -48,6 +50,16 @@ safe_cleanup() {
     "${FL_TMP_ROOT%/}/OP13_FeatureLab_Preflight_${FL_TIMESTAMP}") ;;
     *) return 0 ;;
   esac
+  if [ -n "$ARCHIVE_TMP" ]; then
+    case "$ARCHIVE_TMP" in
+      "${FL_TMP_ROOT%/}/.${REPORT_NAME}.tar.gz.tmp."*) rm -f "$ARCHIVE_TMP" ;;
+    esac
+  fi
+  if [ -n "$ARCHIVE_SHA_TMP" ]; then
+    case "$ARCHIVE_SHA_TMP" in
+      "${FL_TMP_ROOT%/}/.${REPORT_NAME}.tar.gz.tmp."*.sha256) rm -f "$ARCHIVE_SHA_TMP" ;;
+    esac
+  fi
   [ -e "$WORK" ] && rm -rf "$WORK"
 }
 
@@ -133,7 +145,13 @@ require_private_output() {
   WORK="${FL_TMP_ROOT%/}/${REPORT_NAME}"
   ARCHIVE="${FL_OUTPUT_DIR%/}/${REPORT_NAME}.tar.gz"
   ARCHIVE_SHA="${ARCHIVE}.sha256"
+  ARCHIVE_TMP="${FL_TMP_ROOT%/}/.${REPORT_NAME}.tar.gz.tmp.$$"
+  ARCHIVE_SHA_TMP="${ARCHIVE_TMP}.sha256"
+  [ ! -e "$ARCHIVE" ] || fail "archive already exists: $ARCHIVE"
+  [ ! -e "$ARCHIVE_SHA" ] || fail "archive checksum already exists: $ARCHIVE_SHA"
   [ ! -e "$WORK" ] || fail "temporary report workspace already exists: $WORK"
+  [ ! -e "$ARCHIVE_TMP" ] || fail "temporary archive already exists: $ARCHIVE_TMP"
+  [ ! -e "$ARCHIVE_SHA_TMP" ] || fail "temporary checksum already exists: $ARCHIVE_SHA_TMP"
   mkdir -p \
     "$WORK/device" \
     "$WORK/kernel" \
@@ -189,6 +207,10 @@ hash_file() {
   fi
   if command -v toybox >/dev/null 2>&1; then
     toybox sha256sum "$_path" 2>/dev/null | awk '{print $1}'
+    return
+  fi
+  if command -v busybox >/dev/null 2>&1; then
+    busybox sha256sum "$_path" 2>/dev/null | awk '{print $1}'
     return
   fi
   return 1
@@ -404,20 +426,34 @@ write_manifest() {
 }
 
 create_archive() {
-  [ ! -e "$ARCHIVE" ] || fail "archive already exists: $ARCHIVE"
-  [ ! -e "$ARCHIVE_SHA" ] || fail "archive checksum already exists: $ARCHIVE_SHA"
-  if command -v tar >/dev/null 2>&1 && tar -czf "$ARCHIVE" -C "$FL_TMP_ROOT" "$REPORT_NAME" 2>/dev/null; then
-    :
-  elif command -v toybox >/dev/null 2>&1 && toybox tar -czf "$ARCHIVE" -C "$FL_TMP_ROOT" "$REPORT_NAME" 2>/dev/null; then
-    :
-  elif command -v busybox >/dev/null 2>&1 && busybox tar -czf "$ARCHIVE" -C "$FL_TMP_ROOT" "$REPORT_NAME" 2>/dev/null; then
-    :
-  else
-    fail "cannot create tar.gz archive"
+  _archived=1
+  if [ -n "${FL_TAR_BIN:-}" ]; then
+    [ -x "$FL_TAR_BIN" ] || fail "explicit tar command is not executable: $FL_TAR_BIN"
+    "$FL_TAR_BIN" -czf "$ARCHIVE_TMP" -C "$FL_TMP_ROOT" "$REPORT_NAME" 2>/dev/null \
+      && _archived=0
+  elif command -v tar >/dev/null 2>&1 \
+    && tar -czf "$ARCHIVE_TMP" -C "$FL_TMP_ROOT" "$REPORT_NAME" 2>/dev/null; then
+    _archived=0
+  elif command -v toybox >/dev/null 2>&1 \
+    && toybox tar -czf "$ARCHIVE_TMP" -C "$FL_TMP_ROOT" "$REPORT_NAME" 2>/dev/null; then
+    _archived=0
+  elif command -v busybox >/dev/null 2>&1 \
+    && busybox tar -czf "$ARCHIVE_TMP" -C "$FL_TMP_ROOT" "$REPORT_NAME" 2>/dev/null; then
+    _archived=0
   fi
-  _digest="$(hash_file "$ARCHIVE" 2>/dev/null || true)"
+  [ "$_archived" -eq 0 ] || fail "cannot create tar.gz archive"
+  [ -s "$ARCHIVE_TMP" ] || fail "temporary archive is empty"
+
+  _digest="$(hash_file "$ARCHIVE_TMP" 2>/dev/null || true)"
   [ -n "$_digest" ] || fail "cannot hash archive"
-  printf '%s  %s\n' "$_digest" "${ARCHIVE##*/}" > "$ARCHIVE_SHA"
+  printf '%s  %s\n' "$_digest" "${ARCHIVE##*/}" > "$ARCHIVE_SHA_TMP" \
+    || fail "cannot write temporary archive checksum"
+
+  mv "$ARCHIVE_TMP" "$ARCHIVE" || fail "cannot commit archive"
+  if ! mv "$ARCHIVE_SHA_TMP" "$ARCHIVE_SHA"; then
+    rm -f "$ARCHIVE"
+    fail "cannot commit archive checksum"
+  fi
 }
 
 main() {
