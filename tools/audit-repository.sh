@@ -69,6 +69,21 @@ if git grep -nE '(^|[[:space:]])resetprop[[:space:]]+-p([[:space:]]|$)|(^|[[:spa
 fi
 rm -f /tmp/op13-prop-injection.$$
 
+note "verifying read-only device collector"
+PREFLIGHT='tools/device/collect-preflight.sh'
+[ -s "$PREFLIGHT" ] || fail "read-only preflight collector is missing"
+if grep -nE '^[[:space:]]*(mount|umount|setprop|resetprop|reboot|stop|start)([[:space:]]|$)' "$PREFLIGHT" >/tmp/op13-preflight-mutation.$$ 2>/dev/null; then
+  cat /tmp/op13-preflight-mutation.$$
+  rm -f /tmp/op13-preflight-mutation.$$
+  fail "direct mutation command found in read-only preflight collector"
+fi
+if grep -nE '^[[:space:]]*capture_command .*"\$KSUD_BIN"[[:space:]]+(module[[:space:]]+(install|uninstall|enable|disable|action)|feature[[:space:]]+set|resetprop)' "$PREFLIGHT" >/tmp/op13-preflight-ksud.$$ 2>/dev/null; then
+  cat /tmp/op13-preflight-ksud.$$
+  rm -f /tmp/op13-preflight-ksud.$$
+  fail "mutating KernelSU command found in read-only preflight collector"
+fi
+rm -f /tmp/op13-preflight-mutation.$$ /tmp/op13-preflight-ksud.$$
+
 note "rejecting release WebUI mock-success fallback"
 if [ -d src/webui ]; then
   if git grep -nE 'mockRun|mock success|fake device|demo success' -- src/webui >/tmp/op13-mock.$$ 2>/dev/null; then
@@ -80,7 +95,7 @@ fi
 rm -f /tmp/op13-mock.$$
 
 note "checking shell syntax"
-find scripts tools module-template tests/runtime tests/properties -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
+find scripts tools module-template tests/runtime tests/properties tests/device -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
   sh -n "$script" || fail "shell syntax failed: $script"
 done
 

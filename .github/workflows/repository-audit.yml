@@ -1,7 +1,8 @@
 name: repository-audit
 
 # Mainline gate: repository policy, public schemas, generator semantics,
-# validation-module assembly, transactional mounts, and recovery-controlled properties.
+# validation-module assembly, transactional mounts, recovery-controlled
+# properties, and read-only device evidence collection.
 on:
   push:
     branches: [main]
@@ -79,5 +80,11 @@ jobs:
       - name: Run staged property-controller tests
         run: |
           for test_script in tests/properties/test_*.sh; do
+            sh "$test_script"
+          done
+
+      - name: Run read-only device preflight tests
+        run: |
+          for test_script in tests/device/test_*.sh; do
             sh "$test_script"
           done
