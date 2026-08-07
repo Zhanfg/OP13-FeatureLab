@@ -41,8 +41,11 @@ fail() {
 }
 
 safe_cleanup() {
+  case "$FL_TIMESTAMP" in
+    ''|*[!A-Za-z0-9._-]*|*..*) return 0 ;;
+  esac
   case "$WORK" in
-    "${FL_TMP_ROOT%/}"/OP13_FeatureLab_Preflight_*) ;;
+    "${FL_TMP_ROOT%/}/OP13_FeatureLab_Preflight_${FL_TIMESTAMP}") ;;
     *) return 0 ;;
   esac
   [ -e "$WORK" ] && rm -rf "$WORK"
@@ -51,15 +54,41 @@ safe_cleanup() {
 on_exit() {
   safe_cleanup
 }
-trap on_exit EXIT INT TERM HUP
 
-validate_scalar() {
+contains_control() {
+  _control_value="$1"
+  _tab="$(printf '\t')"
+  _cr="$(printf '\r')"
+  case "$_control_value" in
+    *"$_tab"*|*"$_cr"*) return 0 ;;
+  esac
+  [ "$(printf '%s' "$_control_value" | wc -l)" -eq 0 ] || return 0
+  return 1
+}
+
+validate_timestamp() {
+  _value="$1"
+  [ -n "$_value" ] || fail "timestamp is empty"
+  contains_control "$_value" && fail "timestamp contains a control character"
+  case "$_value" in
+    *[!A-Za-z0-9._-]*|*..*) fail "timestamp contains a forbidden path character" ;;
+  esac
+}
+
+validate_field() {
   _value="$1"
   _label="$2"
   [ -n "$_value" ] || fail "$_label is empty"
+  contains_control "$_value" && fail "$_label contains a control character"
+}
+
+validate_root_path() {
+  _value="$1"
+  _label="$2"
+  validate_field "$_value" "$_label"
   case "$_value" in
-    *"	"*|*"
-"*|*""*|*/*|*\\*|*..*) fail "$_label contains a forbidden character" ;;
+    /*) ;;
+    *) fail "$_label must be absolute" ;;
   esac
 }
 
@@ -80,13 +109,17 @@ reject_protected_write_root() {
 }
 
 require_private_output() {
-  validate_scalar "$FL_TIMESTAMP" "timestamp"
-  [ -n "$FL_OUTPUT_DIR" ] || fail "output directory is empty"
-  [ -n "$FL_TMP_ROOT" ] || fail "temporary root is empty"
+  validate_timestamp "$FL_TIMESTAMP"
+  validate_field "$FL_HOSTNAME" "hostname"
+  validate_root_path "$FL_PROC_ROOT" "proc root"
+  validate_root_path "$FL_SYS_ROOT" "sys root"
+  validate_root_path "$FL_DATA_ADB_ROOT" "data-adb root"
+  validate_root_path "$FL_OUTPUT_DIR" "output directory"
+  validate_root_path "$FL_TMP_ROOT" "temporary root"
   [ "$FL_OUTPUT_DIR" != "/" ] || fail "refusing filesystem-root output"
   [ "$FL_TMP_ROOT" != "/" ] || fail "refusing filesystem-root temporary directory"
-  mkdir -p "$FL_OUTPUT_DIR" || fail "cannot create output directory: $FL_OUTPUT_DIR"
-  mkdir -p "$FL_TMP_ROOT" || fail "cannot create temporary root: $FL_TMP_ROOT"
+  [ -d "$FL_OUTPUT_DIR" ] || fail "output directory must already exist: $FL_OUTPUT_DIR"
+  [ -d "$FL_TMP_ROOT" ] || fail "temporary root must already exist: $FL_TMP_ROOT"
   _output_resolved="$(readlink -f "$FL_OUTPUT_DIR" 2>/dev/null || true)"
   _tmp_resolved="$(readlink -f "$FL_TMP_ROOT" 2>/dev/null || true)"
   [ -n "$_output_resolved" ] || fail "cannot resolve output directory"
@@ -96,10 +129,11 @@ require_private_output() {
   [ "$_output_resolved" != "$_tmp_resolved" ] || fail "output and temporary roots must differ"
   FL_OUTPUT_DIR="$_output_resolved"
   FL_TMP_ROOT="$_tmp_resolved"
+  REPORT_NAME="OP13_FeatureLab_Preflight_${FL_TIMESTAMP}"
   WORK="${FL_TMP_ROOT%/}/${REPORT_NAME}"
   ARCHIVE="${FL_OUTPUT_DIR%/}/${REPORT_NAME}.tar.gz"
   ARCHIVE_SHA="${ARCHIVE}.sha256"
-  safe_cleanup
+  [ ! -e "$WORK" ] || fail "temporary report workspace already exists: $WORK"
   mkdir -p \
     "$WORK/device" \
     "$WORK/kernel" \
@@ -108,6 +142,7 @@ require_private_output() {
     "$WORK/mounts" \
     "$WORK/kernelsu" \
     "$WORK/checks" || fail "cannot create report workspace"
+  trap on_exit EXIT INT TERM HUP
 }
 
 record_status() {
