@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+from .assembly_policy import AssemblyError, ModuleMetadata
+from .assembler import assemble_validation_module
 from .audit import AuditError, audit_trees, write_report
 from .generator import GenerationError, generate_payload
 from .snapshot import SnapshotError, capture_property_snapshot
@@ -38,6 +40,26 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--output", required=True, type=Path)
     snapshot.add_argument("--features", help="comma-separated feature IDs; omit to use default_enabled entries")
 
+    assemble = subcommands.add_parser(
+        "assemble-module",
+        help="assemble a local validation-only KernelSU module from audited generated output",
+    )
+    assemble.add_argument("--generated", required=True, type=Path)
+    assemble.add_argument("--compatibility-profile", required=True, type=Path)
+    assemble.add_argument("--source-root", required=True, type=Path)
+    assemble.add_argument("--output", required=True, type=Path)
+    assemble.add_argument("--zip", dest="zip_path", type=Path)
+    assemble.add_argument("--acknowledge-test-only", action="store_true")
+    assemble.add_argument("--module-id", default="op13.featurelab.validation")
+    assemble.add_argument("--module-name", default="OP13 FeatureLab Validation")
+    assemble.add_argument("--module-version", default="0.1.0-validation")
+    assemble.add_argument("--module-version-code", default=1, type=int)
+    assemble.add_argument("--author", default="Axymorrsen")
+    assemble.add_argument(
+        "--description",
+        default="Local PJZ110 validation package; not approved for public flashing",
+    )
+
     audit = subcommands.add_parser("audit", help="compare a baseline tree with a generated tree")
     audit.add_argument("--baseline", required=True, type=Path)
     audit.add_argument("--generated", required=True, type=Path)
@@ -68,6 +90,25 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps({"ok": True, **metadata}, ensure_ascii=False))
             return 0
+        if args.command == "assemble-module":
+            result = assemble_validation_module(
+                args.generated,
+                args.compatibility_profile,
+                args.source_root,
+                args.output,
+                metadata=ModuleMetadata(
+                    module_id=args.module_id,
+                    name=args.module_name,
+                    version=args.module_version,
+                    version_code=args.module_version_code,
+                    author=args.author,
+                    description=args.description,
+                ),
+                zip_path=args.zip_path,
+                acknowledge_test_only=args.acknowledge_test_only,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
 
         report = audit_trees(args.baseline, args.generated)
         write_report(report, args.report)
@@ -77,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if report.verdict == "PASS" else 2
-    except (GenerationError, SnapshotError, AuditError) as exc:
+    except (GenerationError, SnapshotError, AssemblyError, AuditError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1
 

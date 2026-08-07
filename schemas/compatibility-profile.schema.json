@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/op13-featurelab/compatibility-profile.schema.json",
+  "title": "OP13 FeatureLab local validation compatibility profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "channel",
+    "generation_manifest_sha256",
+    "properties",
+    "baselines",
+    "minimum_ksu_version_code",
+    "minimum_ksu_kernel_version_code"
+  ],
+  "properties": {
+    "format": {"const": 1},
+    "channel": {"const": "validation"},
+    "generation_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "properties": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ro.product.device",
+        "ro.product.model",
+        "ro.build.version.sdk",
+        "ro.build.fingerprint",
+        "ro.build.version.incremental"
+      ],
+      "properties": {
+        "ro.product.device": {"type": "string", "minLength": 1},
+        "ro.product.model": {"type": "string", "minLength": 1},
+        "ro.build.version.sdk": {"type": "string", "minLength": 1},
+        "ro.build.fingerprint": {"type": "string", "minLength": 1},
+        "ro.build.version.incremental": {"type": "string", "minLength": 1},
+        "ro.product.name": {"type": "string", "minLength": 1},
+        "ro.product.manufacturer": {"type": "string", "minLength": 1},
+        "ro.build.version.oplusrom": {"type": "string", "minLength": 1}
+      }
+    },
+    "baselines": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^/(?:system|system_ext|product|vendor|odm|oem|my_[a-z0-9_]+)/"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "minimum_ksu_version_code": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "minimum_ksu_kernel_version_code": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
