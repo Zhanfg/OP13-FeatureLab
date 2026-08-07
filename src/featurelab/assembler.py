@@ -16,6 +16,7 @@ from .assembly_files import (
     write_module_prop,
     write_package_checksums,
 )
+from .assembly_hardening import commit_assembled_outputs, validate_assembly_control_fields
 from .assembly_policy import (
     AssemblyError,
     ModuleMetadata,
@@ -158,20 +159,6 @@ def _augment_customize_metadata(staging: Path) -> None:
     )
 
 
-def _replace_directory_atomically(staging: Path, output: Path) -> Path | None:
-    backup = output.with_name(f".{output.name}.backup-{os.getpid()}")
-    shutil.rmtree(backup, ignore_errors=True)
-    if output.exists():
-        os.replace(output, backup)
-    try:
-        os.replace(staging, output)
-    except OSError:
-        if backup.exists() and not output.exists():
-            os.replace(backup, output)
-        raise
-    return backup if backup.exists() else None
-
-
 def assemble_validation_module(
     generated_root: Path,
     compatibility_profile_path: Path,
@@ -192,6 +179,7 @@ def assemble_validation_module(
     )
     if not source.is_dir():
         raise AssemblyError(f"source root does not exist: {source}")
+    validate_assembly_control_fields(generated, profile_path, metadata)
     if zip_resolved is not None and not acknowledge_test_only:
         raise AssemblyError("ZIP creation requires explicit test-only acknowledgement")
 
@@ -199,11 +187,8 @@ def assemble_validation_module(
     generation = validate_generated_output(generated, profile)
 
     staging = output.with_name(f".{output.name}.staging-{os.getpid()}")
-    output_backup = output.with_name(f".{output.name}.backup-{os.getpid()}")
     zip_temporary: Path | None = None
-    zip_backup: Path | None = None
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.rmtree(output_backup, ignore_errors=True)
     staging.mkdir(parents=True)
 
     try:
@@ -232,36 +217,7 @@ def assemble_validation_module(
                 pass
             create_deterministic_zip(staging, zip_temporary)
 
-        backup = _replace_directory_atomically(staging, output)
-        if backup is not None:
-            output_backup = backup
-
-        if zip_resolved is not None and zip_temporary is not None:
-            zip_resolved.parent.mkdir(parents=True, exist_ok=True)
-            zip_backup = zip_resolved.with_name(f".{zip_resolved.name}.backup-{os.getpid()}")
-            try:
-                zip_backup.unlink()
-            except FileNotFoundError:
-                pass
-            if zip_resolved.exists():
-                os.replace(zip_resolved, zip_backup)
-            try:
-                os.replace(zip_temporary, zip_resolved)
-            except OSError:
-                if output.exists():
-                    shutil.rmtree(output)
-                if output_backup.exists():
-                    os.replace(output_backup, output)
-                if zip_backup.exists() and not zip_resolved.exists():
-                    os.replace(zip_backup, zip_resolved)
-                raise
-
-        shutil.rmtree(output_backup, ignore_errors=True)
-        if zip_backup is not None:
-            try:
-                zip_backup.unlink()
-            except FileNotFoundError:
-                pass
+        commit_assembled_outputs(staging, output, zip_temporary, zip_resolved)
 
         return {
             "ok": True,
@@ -284,12 +240,3 @@ def assemble_validation_module(
                 zip_temporary.unlink()
             except FileNotFoundError:
                 pass
-        if output_backup.exists() and output.exists():
-            shutil.rmtree(output_backup, ignore_errors=True)
-        if (
-            zip_backup is not None
-            and zip_backup.exists()
-            and zip_resolved is not None
-            and zip_resolved.exists()
-        ):
-            zip_backup.unlink()
