@@ -31,6 +31,12 @@ reports/private/
 *.lock
 *.bak
 
+# Private property-capture inputs
+getprop.private.txt
+*.getprop.private.txt
+property-snapshot.private.json
+*.property-snapshot.private.json
+
 # Local configuration
 .env
 .env.*
