@@ -34,18 +34,18 @@ fi
 
 note "rejecting credential and secret paths in executable source"
 SENSITIVE_PATTERN='/data/system/locksettings|/data/system/spblob|/data/misc/gatekeeper|/data/vendor/weaver|/metadata/vold|/data/unencrypted'
-# The centralized denylist and synthetic regression tests must name protected paths.
-# All other executable/configuration source remains prohibited from referencing them.
+# Centralized denylist implementations and synthetic tests must name protected
+# paths. All other executable/configuration source remains prohibited.
 if git grep -nE "$SENSITIVE_PATTERN" -- . \
   ':!SECURITY.md' ':!README.md' ':!docs/**' ':!tools/audit-repository.sh' \
-  ':!src/featurelab/audit.py' ':!tests/**' >/tmp/op13-sensitive.$$ 2>/dev/null; then
+  ':!src/featurelab/audit.py' ':!scripts/runtime/policy.sh' ':!tests/**' >/tmp/op13-sensitive.$$ 2>/dev/null; then
   cat /tmp/op13-sensitive.$$
   rm -f /tmp/op13-sensitive.$$
-  fail "sensitive paths used outside the centralized guard or regression tests"
+  fail "sensitive paths used outside centralized guards or regression tests"
 fi
 rm -f /tmp/op13-sensitive.$$
 
-note "verifying centralized protected-path registry"
+note "verifying centralized protected-path registries"
 for protected in \
   '/data/system/locksettings' \
   '/data/system/spblob/' \
@@ -54,8 +54,14 @@ for protected in \
   '/metadata/vold/' \
   '/data/unencrypted/'; do
   grep -Fq "$protected" src/featurelab/audit.py \
-    || fail "centralized protected-path registry is missing: $protected"
+    || fail "Python protected-path registry is missing: $protected"
+  grep -Fq "$protected" scripts/runtime/policy.sh \
+    || fail "runtime protected-path registry is missing: $protected"
 done
+
+note "rejecting unconditional root system.prop"
+[ ! -e system.prop ] || fail "root system.prop bypasses recovery-controlled property groups"
+[ ! -e module-template/system.prop ] || fail "module template contains an unconditional system.prop"
 
 note "rejecting release WebUI mock-success fallback"
 if [ -d src/webui ]; then
@@ -68,7 +74,7 @@ fi
 rm -f /tmp/op13-mock.$$
 
 note "checking shell syntax"
-find scripts tools -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
+find scripts tools module-template tests/runtime -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
   sh -n "$script" || fail "shell syntax failed: $script"
 done
 
