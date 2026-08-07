@@ -25,8 +25,21 @@ from .assembly_policy import (
     validate_generated_output,
     validate_path_isolation,
 )
+from .assembly_webui import copy_webui_assets
 from .util import atomic_write_bytes, sha256_file
 
+
+SAFE_MODULE_PERMISSION_BLOCK = r'''
+# Do not recursively change webroot permissions or SELinux context. KernelSU
+# manages the WebUI tree. Only project runtime and generated payloads are set.
+set_perm "$MODPATH" 0 0 0755
+[ ! -d "$MODPATH/generated" ] || set_perm_recursive "$MODPATH/generated" 0 0 0755 0644
+[ ! -d "$MODPATH/scripts" ] || set_perm_recursive "$MODPATH/scripts" 0 0 0755 0755
+[ ! -f "$MODPATH/module.prop" ] || set_perm "$MODPATH/module.prop" 0 0 0644
+[ ! -f "$MODPATH/skip_mount" ] || set_perm "$MODPATH/skip_mount" 0 0 0644
+[ ! -f "$MODPATH/LICENSE" ] || set_perm "$MODPATH/LICENSE" 0 0 0644
+[ ! -f "$MODPATH/THIRD_PARTY_NOTICES.md" ] || set_perm "$MODPATH/THIRD_PARTY_NOTICES.md" 0 0 0644
+'''
 
 METADATA_PERMISSION_BLOCK = r'''
 TAB="$(printf '\t')"
@@ -152,9 +165,10 @@ def _augment_customize_metadata(staging: Path) -> None:
     marker = 'set_perm_recursive "$MODPATH" 0 0 0755 0644\n'
     if marker not in content:
         raise AssemblyError("customize template permission marker is missing")
+    replacement = SAFE_MODULE_PERMISSION_BLOCK + METADATA_PERMISSION_BLOCK
     atomic_write_bytes(
         customize_path,
-        content.replace(marker, marker + METADATA_PERMISSION_BLOCK, 1).encode("utf-8"),
+        content.replace(marker, replacement, 1).encode("utf-8"),
         0o755,
     )
 
@@ -193,6 +207,7 @@ def assemble_validation_module(
 
     try:
         copy_project_runtime(source, staging)
+        webui = copy_webui_assets(source, staging, metadata.module_id)
         write_module_prop(staging, metadata)
         write_customize(staging, profile)
         target_count, property_row_count = _copy_generated_payload(generation, staging)
@@ -230,6 +245,8 @@ def assemble_validation_module(
             "selected_features": list(generation.manifest["selected_features"]),
             "target_count": target_count,
             "property_row_count": property_row_count,
+            "webui_included": bool(webui["included"]),
+            "webui_file_count": int(webui["file_count"]),
         }
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise AssemblyError(str(exc)) from exc
