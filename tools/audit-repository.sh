@@ -59,9 +59,15 @@ for protected in \
     || fail "runtime protected-path registry is missing: $protected"
 done
 
-note "rejecting unconditional root system.prop"
+note "rejecting unconditional or persistent property injection"
 [ ! -e system.prop ] || fail "root system.prop bypasses recovery-controlled property groups"
 [ ! -e module-template/system.prop ] || fail "module template contains an unconditional system.prop"
+if git grep -nE '(^|[[:space:]])resetprop[[:space:]]+-p([[:space:]]|$)|(^|[[:space:]])setprop([[:space:]]|$)' -- scripts/properties module-template >/tmp/op13-prop-injection.$$ 2>/dev/null; then
+  cat /tmp/op13-prop-injection.$$
+  rm -f /tmp/op13-prop-injection.$$
+  fail "persistent resetprop or direct setprop found in property controller"
+fi
+rm -f /tmp/op13-prop-injection.$$
 
 note "rejecting release WebUI mock-success fallback"
 if [ -d src/webui ]; then
@@ -74,7 +80,7 @@ fi
 rm -f /tmp/op13-mock.$$
 
 note "checking shell syntax"
-find scripts tools module-template tests/runtime -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
+find scripts tools module-template tests/runtime tests/properties -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
   sh -n "$script" || fail "shell syntax failed: $script"
 done
 
