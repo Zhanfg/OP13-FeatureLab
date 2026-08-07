@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/op13-featurelab/property-snapshot.schema.json",
+  "title": "OP13 FeatureLab local property snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "properties"],
+  "properties": {
+    "format": {"const": 1},
+    "properties": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state", "value"],
+            "properties": {
+              "state": {"const": "present"},
+              "value": {"type": ["string", "number", "boolean"]}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state"],
+            "properties": {
+              "state": {"const": "absent"}
+            }
+          }
+        ]
+      }
+    }
+  }
+}

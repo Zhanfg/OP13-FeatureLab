@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--output", required=True, type=Path)
     generate.add_argument("--report", required=True, type=Path)
     generate.add_argument("--features", help="comma-separated feature IDs; omit to use default_enabled entries")
+    generate.add_argument("--property-snapshot", type=Path, help="local allowlisted property snapshot JSON")
 
     audit = subcommands.add_parser("audit", help="compare a baseline tree with a generated tree")
     audit.add_argument("--baseline", required=True, type=Path)
@@ -44,6 +45,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 args.report,
                 selected_features=_selected(args.features),
+                property_snapshot_path=args.property_snapshot,
             )
             print(json.dumps({"ok": True, "selected_features": manifest["selected_features"]}, ensure_ascii=False))
             return 0

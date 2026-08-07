@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "properties": {
+    "persist.vendor.example.feature": {
+      "state": "present",
+      "value": "0"
+    },
+    "persist.vendor.example.optional": {
+      "state": "absent"
+    }
+  }
+}
