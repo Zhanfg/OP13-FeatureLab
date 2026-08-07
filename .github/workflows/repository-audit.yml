@@ -24,22 +24,21 @@ jobs:
       - name: Validate feature schema examples
         run: |
           python3 -m pip install --disable-pip-version-check jsonschema
-          python3 - <<'PY'
+          python3 - <<'PYCODE'
           import json
           from pathlib import Path
           from jsonschema import Draft202012Validator
-
           schema = json.loads(Path('schemas/feature.schema.json').read_text())
           catalog = json.loads(Path('config/feature-catalog.example.json').read_text())
-          validator = Draft202012Validator(schema)
           errors = []
+          validator = Draft202012Validator(schema)
           for index, feature in enumerate(catalog):
               for error in validator.iter_errors(feature):
                   errors.append(f'feature[{index}] {error.json_path}: {error.message}')
           if errors:
               raise SystemExit('\n'.join(errors))
           print(f'validated {len(catalog)} feature definition(s)')
-          PY
+          PYCODE
 
       - name: Run local generator and safety-audit tests
         run: |
@@ -49,5 +48,11 @@ jobs:
       - name: Run transactional mount fault-injection tests
         run: |
           for test_script in tests/runtime/test_*.sh; do
+            sh "$test_script"
+          done
+
+      - name: Run staged property-controller tests
+        run: |
+          for test_script in tests/properties/test_*.sh; do
             sh "$test_script"
           done
