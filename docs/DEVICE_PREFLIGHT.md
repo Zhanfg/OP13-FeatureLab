@@ -12,13 +12,13 @@ Copy the script to the device and execute it with root privileges:
 su -c sh /sdcard/Download/collect-preflight.sh
 ```
 
-The default output directory is `/sdcard/Download`. A different directory can be supplied through the private environment:
+The default output directory is `/sdcard/Download`. A different, pre-existing directory can be supplied through the private environment:
 
 ```sh
 su -c 'FL_OUTPUT_DIR=/sdcard/Download/FeatureLab sh /sdcard/Download/collect-preflight.sh'
 ```
 
-The script rejects output or temporary directories that resolve into:
+The output and temporary roots must already exist; the collector does not create arbitrary parent directories. The script rejects roots that resolve into:
 
 - `/data/adb`;
 - `/proc` or `/sys`;
