@@ -26,6 +26,11 @@ from .assembly_policy import (
     validate_path_isolation,
 )
 from .assembly_webui import copy_webui_assets
+from .assembly_preflight import (
+    resolve_preflight_analysis,
+    validate_preflight_analysis,
+    write_preflight_binding,
+)
 from .util import atomic_write_bytes, sha256_file
 
 
@@ -82,7 +87,9 @@ def _metadata_row(target: str, relative: str, metadata: dict[str, Any]) -> str:
         raise AssemblyError(f"invalid source gid for {target}")
     if selinux is None:
         context = "-"
-    elif isinstance(selinux, str) and selinux and all(char not in selinux for char in "\t\r\n\x00"):
+    elif isinstance(selinux, str) and selinux and all(
+        char not in selinux for char in "\t\r\n\x00"
+    ):
         context = selinux
     else:
         raise AssemblyError(f"invalid SELinux context for {target}")
@@ -182,6 +189,7 @@ def assemble_validation_module(
     metadata: ModuleMetadata,
     zip_path: Path | None = None,
     acknowledge_test_only: bool = False,
+    preflight_analysis_path: Path | None = None,
 ) -> dict[str, Any]:
     metadata.validate()
     generated, profile_path, source, output, zip_resolved = validate_path_isolation(
@@ -199,6 +207,26 @@ def assemble_validation_module(
 
     profile = load_compatibility_profile(profile_path)
     generation = validate_generated_output(generated, profile)
+    webui_source_present = (source / "src/webui").exists() or (
+        source / "scripts/webui"
+    ).exists()
+    analysis_path = resolve_preflight_analysis(
+        preflight_analysis_path,
+        profile_path,
+        protected_paths=(generated, profile_path, source, output)
+        + ((zip_resolved,) if zip_resolved is not None else ()),
+    )
+    preflight_binding = None
+    if analysis_path is not None:
+        preflight_binding = validate_preflight_analysis(
+            analysis_path,
+            profile.properties,
+        )
+    elif webui_source_present:
+        raise AssemblyError(
+            "truthful WebUI validation packages require a "
+            "READY_FOR_CONTROLLED_VALIDATION preflight analysis"
+        )
 
     staging = output.with_name(f".{output.name}.staging-{os.getpid()}")
     zip_temporary: Path | None = None
@@ -210,7 +238,12 @@ def assemble_validation_module(
         webui = copy_webui_assets(source, staging, metadata.module_id)
         write_module_prop(staging, metadata)
         write_customize(staging, profile)
-        target_count, property_row_count = _copy_generated_payload(generation, staging)
+        target_count, property_row_count = _copy_generated_payload(
+            generation,
+            staging,
+        )
+        if preflight_binding is not None:
+            write_preflight_binding(staging, preflight_binding)
         _augment_customize_metadata(staging)
         write_compatibility_tsv(staging, profile)
         build_package_manifest(
@@ -225,14 +258,21 @@ def assemble_validation_module(
         write_package_checksums(staging)
 
         if zip_resolved is not None:
-            zip_temporary = zip_resolved.with_name(f".{zip_resolved.name}.assembled-{os.getpid()}")
+            zip_temporary = zip_resolved.with_name(
+                f".{zip_resolved.name}.assembled-{os.getpid()}"
+            )
             try:
                 zip_temporary.unlink()
             except FileNotFoundError:
                 pass
             create_deterministic_zip(staging, zip_temporary)
 
-        commit_assembled_outputs(staging, output, zip_temporary, zip_resolved)
+        commit_assembled_outputs(
+            staging,
+            output,
+            zip_temporary,
+            zip_resolved,
+        )
 
         return {
             "ok": True,
@@ -247,6 +287,12 @@ def assemble_validation_module(
             "property_row_count": property_row_count,
             "webui_included": bool(webui["included"]),
             "webui_file_count": int(webui["file_count"]),
+            "preflight_bound": preflight_binding is not None,
+            "preflight_analysis_sha256": (
+                preflight_binding["analysis_sha256"]
+                if preflight_binding is not None
+                else None
+            ),
         }
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         raise AssemblyError(str(exc)) from exc
