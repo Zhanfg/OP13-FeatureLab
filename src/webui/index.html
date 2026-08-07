@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>OP13 FeatureLab</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="ambient ambient-a" aria-hidden="true"></div>
+  <div class="ambient ambient-b" aria-hidden="true"></div>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">PJZ110 · VALIDATION CONTROL PLANE</p>
+        <h1>FeatureLab</h1>
+        <p class="subtitle">真实状态、只读诊断、动态取色。当前不开放写操作。</p>
+      </div>
+      <div class="hero-actions">
+        <button id="theme-toggle" class="icon-button" type="button" aria-label="切换明暗模式">◐</button>
+        <button id="refresh" class="tonal-button" type="button">刷新状态</button>
+      </div>
+    </header>
+
+    <section id="fatal" class="fatal hidden" role="alert">
+      <strong>无法连接 KernelSU WebUI API</strong>
+      <p id="fatal-detail">所有状态与操作已停止，不会显示模拟结果。</p>
+    </section>
+
+    <section id="content" class="content hidden">
+      <article class="verdict-card expressive-card">
+        <div>
+          <span class="label">发布状态</span>
+          <h2 id="verdict">NOT FLASH READY</h2>
+          <p id="module-line">正在读取真实模块状态…</p>
+        </div>
+        <span id="read-only-chip" class="chip">只读</span>
+      </article>
+
+      <div class="metric-grid">
+        <article class="metric-card expressive-card"><span>挂载事务</span><strong id="runtime-status">—</strong><small id="runtime-detail">—</small></article>
+        <article class="metric-card expressive-card"><span>属性事务</span><strong id="property-status">—</strong><small id="property-detail">—</small></article>
+        <article class="metric-card expressive-card"><span>载荷完整性</span><strong id="integrity-status">—</strong><small id="integrity-detail">—</small></article>
+        <article class="metric-card expressive-card"><span>启动状态</span><strong id="boot-status">—</strong><small id="boot-detail">—</small></article>
+      </div>
+
+      <div class="panel-grid">
+        <article class="panel expressive-card">
+          <div class="panel-title"><h3>设备</h3><span id="theme-source" class="chip subtle">取色 —</span></div>
+          <dl>
+            <div><dt>产品</dt><dd id="device-product">—</dd></div>
+            <div><dt>型号</dt><dd id="device-model">—</dd></div>
+            <div><dt>SDK</dt><dd id="device-sdk">—</dd></div>
+            <div><dt>ColorOS</dt><dd id="device-rom">—</dd></div>
+            <div><dt>SELinux</dt><dd id="device-selinux">—</dd></div>
+          </dl>
+        </article>
+
+        <article class="panel expressive-card">
+          <div class="panel-title"><h3>安全与恢复</h3><span class="chip subtle">实时</span></div>
+          <ul id="safety-list" class="status-list"></ul>
+        </article>
+      </div>
+
+      <article class="panel expressive-card">
+        <div class="panel-title"><h3>状态错误</h3><span id="error-count" class="chip subtle">0</span></div>
+        <div id="errors" class="empty-state">未检测到状态桥错误。</div>
+      </article>
+
+      <p class="footnote">状态桥不执行 mount、resetprop、模块变更、服务重启或设备重启。</p>
+    </section>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
