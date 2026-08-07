@@ -31,11 +31,13 @@ reports/private/
 *.lock
 *.bak
 
-# Private property-capture inputs
+# Private property-capture and compatibility inputs
 getprop.private.txt
 *.getprop.private.txt
 property-snapshot.private.json
 *.property-snapshot.private.json
+compatibility-profile.private.json
+*.compatibility-profile.private.json
 
 # Local configuration
 .env

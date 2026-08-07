@@ -1,7 +1,7 @@
 name: repository-audit
 
 # Mainline gate: repository policy, public schemas, generator semantics,
-# transactional mounts, and recovery-controlled property stages.
+# validation-module assembly, transactional mounts, and recovery-controlled properties.
 on:
   push:
     branches: [main]
@@ -31,26 +31,41 @@ jobs:
           from pathlib import Path
           from jsonschema import Draft202012Validator
 
-          feature_schema = json.loads(Path('schemas/feature.schema.json').read_text())
-          catalog = json.loads(Path('config/feature-catalog.example.json').read_text())
-          feature_validator = Draft202012Validator(feature_schema)
+          cases = [
+              (
+                  'feature catalog',
+                  'schemas/feature.schema.json',
+                  json.loads(Path('config/feature-catalog.example.json').read_text()),
+                  True,
+              ),
+              (
+                  'property snapshot',
+                  'schemas/property-snapshot.schema.json',
+                  json.loads(Path('config/property-snapshot.example.json').read_text()),
+                  False,
+              ),
+              (
+                  'compatibility profile',
+                  'schemas/compatibility-profile.schema.json',
+                  json.loads(Path('config/compatibility-profile.example.json').read_text()),
+                  False,
+              ),
+          ]
           errors = []
-          for index, feature in enumerate(catalog):
-              for error in feature_validator.iter_errors(feature):
-                  errors.append(f'feature[{index}] {error.json_path}: {error.message}')
-
-          snapshot_schema = json.loads(Path('schemas/property-snapshot.schema.json').read_text())
-          snapshot = json.loads(Path('config/property-snapshot.example.json').read_text())
-          snapshot_validator = Draft202012Validator(snapshot_schema)
-          for error in snapshot_validator.iter_errors(snapshot):
-              errors.append(f'property snapshot {error.json_path}: {error.message}')
-
+          for label, schema_path, value, is_array in cases:
+              schema = json.loads(Path(schema_path).read_text())
+              validator = Draft202012Validator(schema)
+              values = value if is_array else [value]
+              for index, item in enumerate(values):
+                  for error in validator.iter_errors(item):
+                      location = f'[{index}]' if is_array else ''
+                      errors.append(f'{label}{location} {error.json_path}: {error.message}')
           if errors:
               raise SystemExit('\n'.join(errors))
-          print(f'validated {len(catalog)} feature definition(s) and property snapshot example')
+          print('validated feature catalog, property snapshot, and compatibility profile examples')
           PYCODE
 
-      - name: Run local generator and safety-audit tests
+      - name: Run local generator, assembler, and safety-audit tests
         run: |
           PYTHONPATH=src python3 -m unittest discover -s tests -v
           PYTHONPATH=src python3 -m compileall -q src tests

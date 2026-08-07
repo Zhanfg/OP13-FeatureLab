@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "channel": "validation",
+  "generation_manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "properties": {
+    "ro.product.device": "PJZ110",
+    "ro.product.model": "PJZ110",
+    "ro.build.version.sdk": "36",
+    "ro.build.fingerprint": "synthetic/PJZ110/validation:16/example:user/release-keys",
+    "ro.build.version.incremental": "PJZ110_VALIDATION_EXAMPLE",
+    "ro.build.version.oplusrom": "V16.1.0-example"
+  },
+  "baselines": {
+    "/my_product/vendor/etc/example.xml": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "minimum_ksu_version_code": 0,
+  "minimum_ksu_kernel_version_code": 0
+}
