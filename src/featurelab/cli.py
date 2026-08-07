@@ -9,6 +9,7 @@ from pathlib import Path
 from .assembly_policy import AssemblyError, ModuleMetadata
 from .assembler import assemble_validation_module
 from .audit import AuditError, audit_trees, write_report
+from .compatibility import CompatibilityBuildError, build_compatibility_profile
 from .generator import GenerationError, generate_payload
 from .snapshot import SnapshotError, capture_property_snapshot
 
@@ -60,6 +61,19 @@ def build_parser() -> argparse.ArgumentParser:
         default="Local PJZ110 validation package; not approved for public flashing",
     )
 
+    compatibility = subcommands.add_parser(
+        "build-compatibility-profile",
+        help="build a private validation profile from a generation manifest and getprop dump",
+    )
+    compatibility.add_argument("--generation-manifest", required=True, type=Path)
+    compatibility.add_argument("--getprop-dump", required=True, type=Path)
+    compatibility.add_argument("--output", required=True, type=Path)
+    compatibility.add_argument("--minimum-ksu-version-code", required=True, type=int)
+    compatibility.add_argument("--minimum-ksu-kernel-version-code", required=True, type=int)
+    compatibility.add_argument("--expected-device", default="PJZ110")
+    compatibility.add_argument("--expected-sdk", default="36")
+    compatibility.add_argument("--expected-oplus-rom-prefix", default="V16.1")
+
     audit = subcommands.add_parser("audit", help="compare a baseline tree with a generated tree")
     audit.add_argument("--baseline", required=True, type=Path)
     audit.add_argument("--generated", required=True, type=Path)
@@ -109,6 +123,19 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False))
             return 0
+        if args.command == "build-compatibility-profile":
+            result = build_compatibility_profile(
+                args.generation_manifest,
+                args.getprop_dump,
+                args.output,
+                minimum_ksu_version_code=args.minimum_ksu_version_code,
+                minimum_ksu_kernel_version_code=args.minimum_ksu_kernel_version_code,
+                expected_device=args.expected_device,
+                expected_sdk=args.expected_sdk,
+                expected_oplus_rom_prefix=args.expected_oplus_rom_prefix,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
 
         report = audit_trees(args.baseline, args.generated)
         write_report(report, args.report)
@@ -118,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if report.verdict == "PASS" else 2
-    except (GenerationError, SnapshotError, AssemblyError, AuditError) as exc:
+    except (GenerationError, SnapshotError, AssemblyError, CompatibilityBuildError, AuditError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1
 
