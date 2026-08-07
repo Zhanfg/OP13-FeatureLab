@@ -11,6 +11,7 @@ from .assembler import assemble_validation_module
 from .audit import AuditError, audit_trees, write_report
 from .compatibility import CompatibilityBuildError, build_compatibility_profile
 from .generator import GenerationError, generate_payload
+from .preflight import PreflightAnalysisError, analyze_preflight_archive
 from .snapshot import SnapshotError, capture_property_snapshot
 
 
@@ -74,6 +75,14 @@ def build_parser() -> argparse.ArgumentParser:
     compatibility.add_argument("--expected-sdk", default="36")
     compatibility.add_argument("--expected-oplus-rom-prefix", default="V16.1")
 
+    preflight = subcommands.add_parser(
+        "analyze-preflight",
+        help="verify and classify a private read-only device preflight archive",
+    )
+    preflight.add_argument("--archive", required=True, type=Path)
+    preflight.add_argument("--sha256-sidecar", required=True, type=Path)
+    preflight.add_argument("--output", required=True, type=Path)
+
     audit = subcommands.add_parser("audit", help="compare a baseline tree with a generated tree")
     audit.add_argument("--baseline", required=True, type=Path)
     audit.add_argument("--generated", required=True, type=Path)
@@ -136,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False))
             return 0
+        if args.command == "analyze-preflight":
+            result = analyze_preflight_archive(args.archive, args.sha256_sidecar, args.output)
+            print(json.dumps(result.as_dict(), ensure_ascii=False))
+            return result.exit_code
 
         report = audit_trees(args.baseline, args.generated)
         write_report(report, args.report)
@@ -145,7 +158,14 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if report.verdict == "PASS" else 2
-    except (GenerationError, SnapshotError, AssemblyError, CompatibilityBuildError, AuditError) as exc:
+    except (
+        GenerationError,
+        SnapshotError,
+        AssemblyError,
+        CompatibilityBuildError,
+        PreflightAnalysisError,
+        AuditError,
+    ) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1
 

@@ -31,13 +31,17 @@ reports/private/
 *.lock
 *.bak
 
-# Private property-capture and compatibility inputs
+# Private property-capture, preflight, and compatibility inputs
 getprop.private.txt
 *.getprop.private.txt
 property-snapshot.private.json
 *.property-snapshot.private.json
 compatibility-profile.private.json
 *.compatibility-profile.private.json
+preflight-analysis.private/
+*.preflight-analysis.private/
+compatibility-getprop.private.txt
+preflight-inputs.sha256
 
 # Local configuration
 .env

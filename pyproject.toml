@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "op13-featurelab"
-version = "0.5.0"
-description = "Local structural generator, compatibility builder, validation-module assembler, and semantic safety auditor for OP13 FeatureLab"
+version = "0.6.0"
+description = "Local generator, private preflight analyzer, validation-module assembler, and semantic safety auditor for OP13 FeatureLab"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "GPL-3.0-only"}
