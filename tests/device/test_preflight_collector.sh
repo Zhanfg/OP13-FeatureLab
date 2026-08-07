@@ -203,6 +203,7 @@ grep -Fq 'identity_status	FAIL' \
   "$TMP/mismatch/OP13_FeatureLab_Preflight_20260807_000001/summary.tsv"
 
 # Invalid timestamps and protected output roots must fail before collection.
+printf 'keep\n' > "$WORKROOT/escape"
 if PATH="$FAKE_BIN:$PATH" \
   FL_PROC_ROOT="$FAKE_PROC" \
   FL_SYS_ROOT="$FAKE_SYS" \
@@ -216,13 +217,18 @@ if PATH="$FAKE_BIN:$PATH" \
   printf 'FAIL: traversal timestamp was accepted\n' >&2
   exit 1
 fi
+[ "$(cat "$WORKROOT/escape")" = "keep" ] || {
+  printf 'FAIL: invalid timestamp cleanup touched an unrelated path\n' >&2
+  exit 1
+}
 
+PROTECTED_CHILD="$FAKE_ADB/modules/new-output"
 if PATH="$FAKE_BIN:$PATH" \
   FL_PROC_ROOT="$FAKE_PROC" \
   FL_SYS_ROOT="$FAKE_SYS" \
   FL_DATA_ADB_ROOT="$FAKE_ADB" \
   FL_TMP_ROOT="$WORKROOT" \
-  FL_OUTPUT_DIR="$FAKE_ADB/modules" \
+  FL_OUTPUT_DIR="$PROTECTED_CHILD" \
   FL_GETPROP_BIN="$FAKE_BIN/getprop" \
   FL_ALLOW_NON_ROOT=1 \
   FL_TIMESTAMP=20260807_000002 \
@@ -230,5 +236,9 @@ if PATH="$FAKE_BIN:$PATH" \
   printf 'FAIL: protected module output directory was accepted\n' >&2
   exit 1
 fi
+[ ! -e "$PROTECTED_CHILD" ] || {
+  printf 'FAIL: protected output directory was created before rejection\n' >&2
+  exit 1
+}
 
 printf 'PASS: read-only preflight collector synthetic tests\n'
