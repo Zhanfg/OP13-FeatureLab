@@ -6,6 +6,7 @@ from .assembler import assemble_validation_module
 from .audit import AuditError, AuditReport, audit_trees
 from .compatibility import CompatibilityBuildError, build_compatibility_profile
 from .generator import GenerationError, generate_payload
+from .preflight import PreflightAnalysisError, PreflightAnalysisResult, analyze_preflight_archive
 from .propertyplan import PropertyPlanError, build_property_plan, render_property_plan
 from .snapshot import SnapshotError, capture_property_snapshot
 
@@ -16,8 +17,11 @@ __all__ = [
     "AuditReport",
     "GenerationError",
     "ModuleMetadata",
+    "PreflightAnalysisError",
+    "PreflightAnalysisResult",
     "PropertyPlanError",
     "SnapshotError",
+    "analyze_preflight_archive",
     "assemble_validation_module",
     "audit_trees",
     "build_compatibility_profile",
@@ -27,4 +31,4 @@ __all__ = [
     "render_property_plan",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
