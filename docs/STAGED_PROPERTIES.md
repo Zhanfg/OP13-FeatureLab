@@ -48,7 +48,9 @@ The runtime rejects keys associated with:
 - LockSettings, Gatekeeper, Weaver and Synthetic Password;
 - privacy-password and Keyguard;
 - fingerprint and biometrics;
-- camera and face enrollment/detection.
+- camera and token-bounded face enrollment/detection/authentication.
+
+Token boundaries prevent unrelated names such as `surface_feature_detector` from being classified as face properties.
 
 Security-state display/spoof properties that do not control credentials remain representable as disabled-by-default Lab features, but are not part of Stable defaults.
 
@@ -56,9 +58,13 @@ Security-state display/spoof properties that do not control credentials remain r
 
 Any preflight or apply failure writes the shared runtime recovery flag. Service and boot-completed wrappers then roll back property stages and detach the XML transaction. Recovery boots skip all property application.
 
+## Local plan generation
+
+The Python generator converts selected `property_set` operations and a local allowlisted property snapshot into `property-plan.tsv`. Original baseline property values are not serialized into the plan; only baseline state and SHA-256 are retained. See `docs/PROPERTY_PLAN_GENERATION.md`.
+
 ## Remaining work
 
-- generate the plan directly from the feature catalog and local property snapshot;
+- add an on-device allowlisted snapshot capture path;
 - add property mapping to the WebUI;
 - validate `resetprop` behavior on the target KernelSU version and PJZ110;
 - complete Stable/Lab default separation.

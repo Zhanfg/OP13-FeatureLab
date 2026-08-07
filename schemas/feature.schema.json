@@ -16,13 +16,49 @@
     "activation_stage",
     "rollback"
   ],
-  "properties": {
-    "id": {
-      "type": "string",
-      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"
+  "$defs": {
+    "xmlOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "target", "selector", "preserve_unrelated"],
+      "properties": {
+        "type": {
+          "enum": ["xml_add", "xml_update", "xml_remove_exact", "list_append", "permission_add"]
+        },
+        "target": {"type": "string", "pattern": "^/"},
+        "selector": {"type": "string", "minLength": 1},
+        "value": {},
+        "preserve_unrelated": {"const": true}
+      }
     },
-    "title": { "type": "string", "minLength": 1 },
-    "description": { "type": "string" },
+    "propertyOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "key", "value", "stage", "apply_mode", "restart"],
+      "properties": {
+        "type": {"const": "property_set"},
+        "key": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$"},
+        "value": {"type": ["string", "number", "boolean"]},
+        "stage": {"enum": ["early", "service", "boot-completed"]},
+        "apply_mode": {"enum": ["direct", "trigger"]},
+        "restart": {"enum": ["none", "service", "reboot"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"stage": {"const": "early"}}, "required": ["stage"]},
+          "then": {"properties": {"apply_mode": {"const": "direct"}}}
+        },
+        {
+          "if": {"properties": {"apply_mode": {"const": "trigger"}}, "required": ["apply_mode"]},
+          "then": {"properties": {"restart": {"enum": ["service", "reboot"]}}}
+        }
+      ]
+    }
+  },
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$"},
+    "title": {"type": "string", "minLength": 1},
+    "description": {"type": "string"},
     "category": {
       "enum": [
         "display",
@@ -40,68 +76,32 @@
         "other"
       ]
     },
-    "channel": { "enum": ["stable", "lab"] },
-    "risk": { "enum": ["low", "medium", "high"] },
-    "default_enabled": { "type": "boolean" },
+    "channel": {"enum": ["stable", "lab"]},
+    "risk": {"enum": ["low", "medium", "high"]},
+    "default_enabled": {"type": "boolean"},
     "evidence": {
       "type": "object",
       "additionalProperties": false,
       "required": ["state"],
       "properties": {
         "state": {
-          "enum": [
-            "declared",
-            "consumer_found",
-            "hal_present",
-            "driver_present",
-            "hardware_verified"
-          ]
+          "enum": ["declared", "consumer_found", "hal_present", "driver_present", "hardware_verified"]
         },
-        "notes": { "type": "string" },
-        "probes": {
-          "type": "array",
-          "items": { "type": "string" },
-          "uniqueItems": true
-        }
+        "notes": {"type": "string"},
+        "probes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
       }
     },
-    "dependencies": {
-      "type": "array",
-      "items": { "type": "string" },
-      "uniqueItems": true
-    },
-    "conflicts": {
-      "type": "array",
-      "items": { "type": "string" },
-      "uniqueItems": true
-    },
-    "activation_stage": {
-      "enum": ["install", "post-mount", "late-load", "service", "reboot"]
-    },
+    "dependencies": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "conflicts": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "activation_stage": {"enum": ["install", "post-mount", "late-load", "service", "reboot"]},
     "operations": {
       "type": "array",
       "minItems": 1,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["type", "target", "selector"],
-        "properties": {
-          "type": {
-            "enum": [
-              "xml_add",
-              "xml_update",
-              "xml_remove_exact",
-              "list_append",
-              "permission_add",
-              "property_set",
-              "runtime_action"
-            ]
-          },
-          "target": { "type": "string", "pattern": "^/" },
-          "selector": { "type": "string", "minLength": 1 },
-          "value": {},
-          "preserve_unrelated": { "const": true }
-        }
+        "oneOf": [
+          {"$ref": "#/$defs/xmlOperation"},
+          {"$ref": "#/$defs/propertyOperation"}
+        ]
       }
     },
     "protected_domains": {
@@ -118,14 +118,14 @@
       },
       "uniqueItems": true
     },
-    "binary_search_bucket": { "type": "string" },
+    "binary_search_bucket": {"type": "string"},
     "rollback": {
       "type": "object",
       "additionalProperties": false,
       "required": ["strategy", "verify"],
       "properties": {
-        "strategy": { "enum": ["baseline_restore", "property_restore", "service_restore"] },
-        "verify": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        "strategy": {"enum": ["baseline_restore", "property_restore", "service_restore"]},
+        "verify": {"type": "array", "minItems": 1, "items": {"type": "string"}}
       }
     }
   }
