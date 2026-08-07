@@ -38,6 +38,17 @@ Unselected properties are discarded, including their names and values.
 
 The command writes the output atomically. A malformed or duplicate `getprop` row, unknown Feature ID, duplicate property ownership, invalid value, or protected key leaves the previous snapshot untouched.
 
+## Machine-readable command result
+
+On success the CLI prints one JSON object containing:
+
+- `selected_keys`;
+- `present_count` and `absent_count`;
+- SHA-256 of the catalog, temporary dump, and generated snapshot;
+- the explicit feature selection, or `null` when defaults were used.
+
+The result does not echo property values. On failure the CLI writes a JSON error object to standard error and exits non-zero.
+
 ## Protected keys
 
 Snapshot generation rejects credential and security-adjacent keys using the same central policy as property-plan generation:
