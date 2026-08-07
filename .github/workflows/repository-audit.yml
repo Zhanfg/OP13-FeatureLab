@@ -1,5 +1,7 @@
 name: repository-audit
 
+# Mainline gate: repository policy, public schemas, generator semantics,
+# transactional mounts, and recovery-controlled property stages.
 on:
   push:
     branches: [main]
