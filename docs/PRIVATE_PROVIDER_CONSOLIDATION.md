@@ -12,7 +12,7 @@ Imported or reimplemented in the public canonical:
 - process existence, executable path and SELinux-domain evidence;
 - local VINTF declaration evidence;
 - provider payload path ownership/overlap detection;
-- mutation-tripwire tests and explicit “CI is not real-device validation” semantics.
+- mutation-tripwire tests and explicit “CI is not real-device validation” semantics;\n- provider-neutral decoder evidence schema/validator with component-creation and PCM-output proof;\n- inert-reference-tree audit for retired provider experiments.
 
 Already present in FeatureLab and therefore **not duplicated** from the private line:
 
@@ -47,4 +47,4 @@ Never migrate to the public repository:
 
 ## Archive implication
 
-The private provider repository is not archive-ready while unique runtime-registration or repartition research remains active. Its long-term target role is restricted inputs/reference material only, after unresolved private research is classified and any remaining reusable logic is clean-roomed here.
+Once the private runtime-registration and repartition lines are formally closed as research/provenance and no active implementation duty remains, the private repository may be treated as a restricted-input/reference vault. Archive readiness is then a repository-lifecycle decision, not a claim that proprietary runtime integration succeeded.
