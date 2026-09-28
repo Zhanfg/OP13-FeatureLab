@@ -16,6 +16,7 @@ SERVICE_BIN="${FL_MEDIA_SERVICE_BIN:-service}"
 DUMPSYS_BIN="${FL_MEDIA_DUMPSYS_BIN:-dumpsys}"
 PIDOF_BIN="${FL_MEDIA_PIDOF_BIN:-pidof}"
 XML_DIRS="${FL_MEDIA_XML_DIRS:-/odm/etc:/vendor/etc:/system/etc:/system_ext/etc}"
+VINTF_DIRS="${FL_MEDIA_VINTF_DIRS:-/odm/etc/vintf:/vendor/etc/vintf:/system/etc/vintf:/system_ext/etc/vintf}"
 OUTPUT="${FL_MEDIA_OUTPUT:-}"
 
 fail() {
@@ -44,6 +45,24 @@ find_xml_declaration() {
     for xml in "$dir"/media_codecs*.xml; do
       [ -f "$xml" ] || continue
       grep -Fq "$component" "$xml" 2>/dev/null && {
+        IFS=$old_ifs
+        return 0
+      }
+    done
+  done
+  IFS=$old_ifs
+  return 1
+}
+
+find_vintf_declaration() {
+  identity="$1"
+  old_ifs=$IFS
+  IFS=:
+  for dir in $VINTF_DIRS; do
+    [ -d "$dir" ] || continue
+    for xml in "$dir"/*.xml; do
+      [ -f "$xml" ] || continue
+      grep -Fq "$identity" "$xml" 2>/dev/null && {
         IFS=$old_ifs
         return 0
       }
@@ -86,11 +105,11 @@ probe_body() {
   emit build_fingerprint "$(command_output "$GETPROP_BIN" ro.build.fingerprint)"
   emit selinux "$(command_output "$GETENFORCE_BIN")"
 
-  while IFS="$(printf '\t')" read -r provider component mime service_name process_name extra; do
+  while IFS="$(printf '\t')" read -r provider component mime service_name process_name vintf_identity extra; do
     case "$provider" in
       ''|'#'*) continue ;;
     esac
-    [ -z "${extra:-}" ] || fail "config row has more than five columns: $provider"
+    [ -z "${extra:-}" ] || fail "config row has more than six columns: $provider"
     [ -n "${component:-}" ] || fail "missing component for provider: $provider"
     [ -n "${mime:-}" ] || fail "missing MIME for provider: $provider"
 
@@ -112,6 +131,16 @@ probe_body() {
       service_state="not_configured"
     fi
 
+    if [ -n "${vintf_identity:-}" ]; then
+      if find_vintf_declaration "$vintf_identity"; then
+        vintf_state="declared"
+      else
+        vintf_state="missing"
+      fi
+    else
+      vintf_state="not_configured"
+    fi
+
     process_state="not_configured"
     process_exe=""
     process_selinux=""
@@ -127,6 +156,7 @@ probe_body() {
     emit "provider.$provider.mime" "$mime"
     emit "provider.$provider.codec_state" "$codec_state"
     emit "provider.$provider.service_state" "$service_state"
+    emit "provider.$provider.vintf_state" "$vintf_state"
     emit "provider.$provider.process_state" "$process_state"
     emit "provider.$provider.process_exe" "$process_exe"
     emit "provider.$provider.process_selinux" "$process_selinux"
