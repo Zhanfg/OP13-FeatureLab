@@ -18,7 +18,7 @@ The project is deliberately **not** a collection of copied firmware XML files. I
 - Provide binary-search feature isolation so large feature sets can be tested with fewer reboot cycles.
 - Make mount operations transactional, attributable and reversible.
 - Protect LockSettings, Gatekeeper, Weaver, Synthetic Password, Keyguard, privacy-password and biometric flows.
-- Provide an M3 Expressive WebUI with dynamic color, feature search, risk metadata, diagnostics and recovery controls.
+- Provide an M3 Expressive WebUI with dynamic color, feature search, risk metadata, diagnostics and recovery controls.\n- Provide provider-neutral audio/codec runtime diagnostics without redistributing vendor payloads.
 
 ## Non-goals
 
@@ -69,6 +69,10 @@ A future release is produced in four stages:
 4. **Package locally** — create a flashable artifact only after all release gates pass.
 
 The public repository and public releases must not contain complete proprietary baseline files.
+
+## Media and codec diagnostics
+
+FeatureLab is the public engineering/control plane for reusable media/codec diagnostics. Provider-specific repositories that contain restricted inputs remain private and are not parallel product canonicals. The public probe accepts provider identities through local configuration, distinguishes declaration from runtime registration, records optional service/process/SELinux evidence, and performs no mutation. See [docs/MEDIA_RUNTIME_DIAGNOSTICS.md](docs/MEDIA_RUNTIME_DIAGNOSTICS.md).
 
 ## Development status
 
