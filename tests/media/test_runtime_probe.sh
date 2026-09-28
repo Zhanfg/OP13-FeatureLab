@@ -9,13 +9,14 @@ trap 'rm -rf "$TMP"' EXIT INT TERM HUP
 BIN="$TMP/bin"
 PROC="$TMP/proc"
 XML="$TMP/vendor/etc"
-mkdir -p "$BIN" "$PROC/42/attr" "$XML"
+VINTF="$TMP/vendor/etc/vintf"
+mkdir -p "$BIN" "$PROC/42/attr" "$XML" "$VINTF"
 
 cat > "$TMP/providers.tsv" <<'EOF_CONFIG'
-# provider	component	mime	service	process
-registered	c2.example.registered.decoder	audio/example	android.hardware.media.c2.IComponentStore/example	example-codec
-declared	c2.example.declared.decoder	audio/example2		
-missing	c2.example.missing.decoder	audio/example3		
+# provider	component	mime	service	process	vintf_identity
+registered	c2.example.registered.decoder	audio/example	android.hardware.media.c2.IComponentStore/example	example-codec	android.hardware.example.IExample/default
+declared	c2.example.declared.decoder	audio/example2			
+missing	c2.example.missing.decoder	audio/example3			
 EOF_CONFIG
 
 cat > "$XML/media_codecs_example.xml" <<'EOF_XML'
@@ -23,6 +24,14 @@ cat > "$XML/media_codecs_example.xml" <<'EOF_XML'
   <MediaCodec name="c2.example.declared.decoder" type="audio/example2" />
 </MediaCodecs>
 EOF_XML
+
+cat > "$VINTF/manifest.xml" <<'EOF_VINTF'
+<manifest>
+  <hal>
+    <fqname>android.hardware.example.IExample/default</fqname>
+  </hal>
+</manifest>
+EOF_VINTF
 
 cat > "$BIN/getprop" <<'EOF_GETPROP'
 #!/usr/bin/env sh
@@ -72,14 +81,16 @@ EOF_MUTATION
   chmod 755 "$BIN/$cmd"
 done
 
-PATH="$BIN:$PATH" FL_MEDIA_CONFIG="$TMP/providers.tsv" FL_MEDIA_PROC_ROOT="$PROC" FL_MEDIA_GETPROP_BIN="$BIN/getprop" FL_MEDIA_GETENFORCE_BIN="$BIN/getenforce" FL_MEDIA_SERVICE_BIN="$BIN/service" FL_MEDIA_DUMPSYS_BIN="$BIN/dumpsys" FL_MEDIA_PIDOF_BIN="$BIN/pidof" FL_MEDIA_XML_DIRS="$XML" sh "$ROOT/tools/media/collect-runtime.sh" > "$TMP/report.tsv"
+PATH="$BIN:$PATH" FL_MEDIA_CONFIG="$TMP/providers.tsv" FL_MEDIA_PROC_ROOT="$PROC" FL_MEDIA_GETPROP_BIN="$BIN/getprop" FL_MEDIA_GETENFORCE_BIN="$BIN/getenforce" FL_MEDIA_SERVICE_BIN="$BIN/service" FL_MEDIA_DUMPSYS_BIN="$BIN/dumpsys" FL_MEDIA_PIDOF_BIN="$BIN/pidof" FL_MEDIA_XML_DIRS="$XML" FL_MEDIA_VINTF_DIRS="$VINTF" sh "$ROOT/tools/media/collect-runtime.sh" > "$TMP/report.tsv"
 
 grep -Fq 'mode	read_only' "$TMP/report.tsv"
 grep -Fq 'provider.registered.codec_state	registered' "$TMP/report.tsv"
 grep -Fq 'provider.registered.service_state	found' "$TMP/report.tsv"
+grep -Fq 'provider.registered.vintf_state	declared' "$TMP/report.tsv"
 grep -Fq 'provider.registered.process_state	running' "$TMP/report.tsv"
 grep -Fq 'provider.registered.process_selinux	u:r:example_codec:s0' "$TMP/report.tsv"
 grep -Fq 'provider.declared.codec_state	declared_only' "$TMP/report.tsv"
+grep -Fq 'provider.declared.vintf_state	not_configured' "$TMP/report.tsv"
 grep -Fq 'provider.missing.codec_state	missing' "$TMP/report.tsv"
 
 [ ! -e "$MUTATION" ] || {

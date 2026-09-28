@@ -9,7 +9,7 @@ Provider-specific repositories that contain restricted vendor inputs are not par
 `tools/media/collect-runtime.sh` is a provider-neutral, read-only runtime probe. A local TSV config supplies the identities that must not be hard-coded into the public repository:
 
 ```text
-provider<TAB>component<TAB>mime<TAB>service<TAB>process
+provider<TAB>component<TAB>mime<TAB>service<TAB>process<TAB>vintf_identity
 ```
 
 The probe reports separate evidence layers:
@@ -17,9 +17,9 @@ The probe reports separate evidence layers:
 1. **declared** — a component identity is present in a local `media_codecs*.xml` source;
 2. **registered** — the component is visible through Android media runtime dumps;
 3. **service** — an optional Binder/service identity is visible;
-4. **process** — an optional process exists, including executable and SELinux context.
+4. **process** — an optional process exists, including executable and SELinux context;\n5. **VINTF** — an optional interface identity is declared in local VINTF manifests.
 
-A declaration is not treated as proof of runtime registration. A running process is not treated as proof that MediaCodec can instantiate and decode through the component.
+Codec XML or VINTF declaration is not treated as proof of runtime registration. A running process is not treated as proof that MediaCodec can instantiate and decode through the component.
 
 The probe performs no mount/unmount, property writes, service restart, process termination, module mutation or reboot.
 
