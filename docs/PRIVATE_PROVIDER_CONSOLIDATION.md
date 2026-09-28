@@ -12,7 +12,10 @@ Imported or reimplemented in the public canonical:
 - process existence, executable path and SELinux-domain evidence;
 - local VINTF declaration evidence;
 - provider payload path ownership/overlap detection;
-- mutation-tripwire tests and explicit “CI is not real-device validation” semantics;\n- provider-neutral decoder evidence schema/validator with component-creation and PCM-output proof;\n- inert-reference-tree audit for retired provider experiments.
+- mutation-tripwire tests and explicit “CI is not real-device validation” semantics;\n- provider-neutral decoder evidence schema/validator with component-creation and PCM-output proof;\n- inert-reference-tree audit for retired provider experiments;
+- typed static/declarative/observed runtime dependency closure;
+- ELF SONAME + symbol ABI + linker-namespace contract semantics;
+- exact-target platform compatibility contract that does not treat platform-looking library names as automatically satisfied.
 
 Already present in FeatureLab and therefore **not duplicated** from the private line:
 
