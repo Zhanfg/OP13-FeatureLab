@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "generated_at_utc": "2026-09-28T17:45:00Z",
+  "target": {
+    "product": "SYNTHETIC",
+    "sdk": 36,
+    "build_fingerprint_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "edges": [
+    {
+      "edge_id": "elf:codec-to-helper",
+      "edge_type": "elf-dt-needed",
+      "consumer": "vendor/bin/hw/example-codec",
+      "requirement": "libexample_helper.so",
+      "provider": "vendor/lib64/libexample_helper.so",
+      "provider_partition": "vendor",
+      "resolution": "static-resolved",
+      "architecture": "match",
+      "soname": "match",
+      "symbol_abi": "satisfied",
+      "namespace": "visible",
+      "evidence_sha256": [
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ]
+    },
+    {
+      "edge_id": "xml:codec-include",
+      "edge_type": "media-codec-include",
+      "consumer": "vendor/etc/media_codecs.xml",
+      "requirement": "media_codecs_example.xml",
+      "provider": "vendor/etc/media_codecs_example.xml",
+      "provider_partition": "vendor",
+      "resolution": "declarative-resolved",
+      "architecture": "not-applicable",
+      "soname": "not-applicable",
+      "symbol_abi": "not-applicable",
+      "namespace": "not-applicable",
+      "evidence_sha256": [
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ]
+    },
+    {
+      "edge_id": "runtime:codec-service",
+      "edge_type": "vintf-instance",
+      "consumer": "android.hardware.media.c2",
+      "requirement": "IComponentStore/example",
+      "provider": "example-codec-service",
+      "provider_partition": "vendor",
+      "resolution": "observed-runtime",
+      "architecture": "not-applicable",
+      "soname": "not-applicable",
+      "symbol_abi": "not-applicable",
+      "namespace": "not-applicable",
+      "evidence_sha256": [
+        "4444444444444444444444444444444444444444444444444444444444444444"
+      ]
+    }
+  ],
+  "closures": {
+    "static": [
+      "elf:codec-to-helper"
+    ],
+    "declarative": [
+      "xml:codec-include"
+    ],
+    "observed_runtime": [
+      "runtime:codec-service"
+    ]
+  },
+  "target_platform_contracts": [
+    {
+      "consumer": "vendor/bin/hw/example-codec",
+      "dependency": "android.hardware.example-V1-ndk.so",
+      "source_classification": "source-platform-provided",
+      "target_classification": "compatible",
+      "architecture": "match",
+      "soname": "match",
+      "symbol_abi": "satisfied",
+      "namespace": "visible",
+      "required_symbols": [
+        "ExampleSymbol"
+      ],
+      "required_symbol_versions": [
+        "EXAMPLE_1"
+      ],
+      "target_provider": "vendor/lib64/android.hardware.example-V1-ndk.so",
+      "target_evidence_sha256": [
+        "5555555555555555555555555555555555555555555555555555555555555555"
+      ]
+    }
+  ]
+}
