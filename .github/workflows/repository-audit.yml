@@ -57,6 +57,12 @@ jobs:
                   json.loads(Path('config/media-decoder-evidence.example.json').read_text()),
                   False,
               ),
+              (
+                  'media provider contract',
+                  'schemas/media-provider-contract.schema.json',
+                  json.loads(Path('config/media-provider-contract.example.json').read_text()),
+                  False,
+              ),
           ]
           errors = []
           for label, schema_path, value, is_array in cases:
@@ -69,7 +75,7 @@ jobs:
                       errors.append(f'{label}{location} {error.json_path}: {error.message}')
           if errors:
               raise SystemExit('\n'.join(errors))
-          print('validated feature catalog, property snapshot, compatibility profile, and media decoder evidence examples')
+          print('validated feature catalog, property snapshot, compatibility profile, media decoder evidence, and media provider contract examples')
           PYCODE
 
       - name: Run local generator, assembler, and safety-audit tests
