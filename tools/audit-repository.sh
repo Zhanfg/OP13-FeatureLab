@@ -82,7 +82,22 @@ if grep -nE '^[[:space:]]*capture_command .*"\$KSUD_BIN"[[:space:]]+(module[[:sp
   rm -f /tmp/op13-preflight-ksud.$$
   fail "mutating KernelSU command found in read-only preflight collector"
 fi
-rm -f /tmp/op13-preflight-mutation.$$ /tmp/op13-preflight-ksud.$$
+rm -f /tmp/op13-preflight-mutation.$ /tmp/op13-preflight-ksud.$
+
+note "verifying provider-neutral read-only media probe"
+MEDIA_PROBE='tools/media/collect-runtime.sh'
+[ -s "$MEDIA_PROBE" ] || fail "media runtime probe is missing"
+if grep -nE '^[[:space:]]*(mount|umount|setprop|resetprop|reboot|stop|start|kill)([[:space:]]|$)' "$MEDIA_PROBE" >/tmp/op13-media-mutation.$ 2>/dev/null; then
+  cat /tmp/op13-media-mutation.$
+  rm -f /tmp/op13-media-mutation.$
+  fail "direct mutation command found in read-only media probe"
+fi
+if grep -niE 'dolby|vendor[.]dolby|dms|dap' "$MEDIA_PROBE" >/tmp/op13-media-provider.$ 2>/dev/null; then
+  cat /tmp/op13-media-provider.$
+  rm -f /tmp/op13-media-provider.$
+  fail "provider-specific identity leaked into public media probe"
+fi
+rm -f /tmp/op13-media-mutation.$ /tmp/op13-media-provider.$
 
 note "rejecting release WebUI mock-success fallback"
 if [ -d src/webui ]; then
@@ -95,7 +110,7 @@ fi
 rm -f /tmp/op13-mock.$$
 
 note "checking shell syntax"
-find scripts tools module-template tests/runtime tests/properties tests/device -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
+find scripts tools module-template tests/runtime tests/properties tests/device tests/media -type f -name '*.sh' 2>/dev/null | while IFS= read -r script; do
   sh -n "$script" || fail "shell syntax failed: $script"
 done
 

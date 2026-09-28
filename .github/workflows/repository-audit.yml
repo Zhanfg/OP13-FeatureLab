@@ -2,7 +2,7 @@ name: repository-audit
 
 # Mainline gate: repository policy, public schemas, generator semantics,
 # validation-module assembly, transactional mounts, recovery-controlled
-# properties, and read-only device evidence collection.
+# properties, read-only device evidence collection, and provider-neutral media diagnostics.
 on:
   push:
     branches: [main]
@@ -86,5 +86,11 @@ jobs:
       - name: Run read-only device preflight tests
         run: |
           for test_script in tests/device/test_*.sh; do
+            sh "$test_script"
+          done
+
+      - name: Run provider-neutral media diagnostic tests
+        run: |
+          for test_script in tests/media/test_*.sh; do
             sh "$test_script"
           done
