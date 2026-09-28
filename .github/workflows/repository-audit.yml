@@ -51,6 +51,12 @@ jobs:
                   json.loads(Path('config/compatibility-profile.example.json').read_text()),
                   False,
               ),
+              (
+                  'media decoder evidence',
+                  'schemas/media-decoder-evidence.schema.json',
+                  json.loads(Path('config/media-decoder-evidence.example.json').read_text()),
+                  False,
+              ),
           ]
           errors = []
           for label, schema_path, value, is_array in cases:
@@ -63,7 +69,7 @@ jobs:
                       errors.append(f'{label}{location} {error.json_path}: {error.message}')
           if errors:
               raise SystemExit('\n'.join(errors))
-          print('validated feature catalog, property snapshot, and compatibility profile examples')
+          print('validated feature catalog, property snapshot, compatibility profile, and media decoder evidence examples')
           PYCODE
 
       - name: Run local generator, assembler, and safety-audit tests
@@ -94,3 +100,4 @@ jobs:
           for test_script in tests/media/test_*.sh; do
             sh "$test_script"
           done
+          python3 -m unittest discover -s tests/media -p 'test_*.py' -v
