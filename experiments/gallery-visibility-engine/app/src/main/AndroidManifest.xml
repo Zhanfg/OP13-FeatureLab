@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:name=".GalleryGuardApp"
+        android:allowBackup="false"
+        android:label="Gallery Visibility Engine"
+        android:theme="@style/Theme.GalleryGuard">
+
+        <meta-data
+            android:name="xposeddescription"
+            android:value="ColorOS 相册默认隔离第三方媒体，仅透传用户允许目录，并保留 .nomedia 防护。" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
