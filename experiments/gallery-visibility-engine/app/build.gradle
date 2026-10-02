@@ -30,6 +30,10 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 
+    buildFeatures {
+        buildConfig true
+    }
+
     packaging {
         resources {
             merges += "META-INF/xposed/*"
