@@ -10,8 +10,8 @@ android {
         applicationId "io.github.zhanfg.galleryguard"
         minSdk 26
         targetSdk 37
-        versionCode 14001
-        versionName "1.4.0-alpha1"
+        versionCode 15001
+        versionName "1.5.0-alpha1"
     }
 
     buildTypes {
@@ -49,5 +49,6 @@ dependencies {
     compileOnly 'io.github.libxposed:api:102.0.0'
     implementation 'io.github.libxposed:service:102.0.0'
     implementation 'androidx.appcompat:appcompat:1.7.1'
+    implementation 'androidx.recyclerview:recyclerview:1.4.0'
     implementation 'com.google.android.material:material:1.13.0'
 }
