@@ -233,11 +233,8 @@ final class PhotoPickerAccelerator {
                 PREFETCHING.set(Boolean.TRUE);
                 c = resolver.query(uri, projection, next, null);
 
-                // Intentionally do not walk the cursor. Merely opening/closing the next query
-                // warms provider-side/SQLite caches without copying rows into app memory.
-                if (c != null) {
-                    try { c.getCount(); } catch (Throwable ignored) {}
-                }
+                // Intentionally do not touch rows/count. Executing the query is enough to warm
+                // provider/SQLite state; close immediately to keep memory and Binder work tiny.
             } catch (Throwable ignored) {
                 synchronized (RECENT_PREFETCH_KEYS) {
                     RECENT_PREFETCH_KEYS.remove(key);
