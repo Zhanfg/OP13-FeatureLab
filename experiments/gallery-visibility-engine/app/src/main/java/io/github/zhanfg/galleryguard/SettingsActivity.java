@@ -25,15 +25,19 @@ import java.util.Set;
 import io.github.libxposed.service.XposedService;
 import io.github.libxposed.service.XposedServiceHelper;
 
-public final class SettingsActivity extends AppCompatActivity implements XposedServiceHelper.OnServiceListener {
+public final class SettingsActivity extends AppCompatActivity
+        implements XposedServiceHelper.OnServiceListener {
+
     private static final int REQ_TREE = 1001;
 
     private GalleryGuardApp app;
     private XposedService service;
-    private LinearLayout list;
+    private LinearLayout folderList;
     private TextView status;
-    private MaterialButton addButton;
+    private MaterialButton folderButton;
+    private MaterialButton appButton;
     private MaterialSwitch strictSwitch;
+    private MaterialSwitch pickerAccelSwitch;
     private boolean bindingUi;
 
     @Override protected void onCreate(Bundle state) {
@@ -41,6 +45,11 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
         app = (GalleryGuardApp) getApplication();
         buildUi();
         app.addServiceListener(this, true);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        render();
     }
 
     @Override protected void onDestroy() {
@@ -66,7 +75,25 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
 
         status = new TextView(this);
         status.setText("正在连接 LSPosed…");
+        status.setPadding(0, 0, 0, dp(8));
         root.addView(status);
+
+        pickerAccelSwitch = new MaterialSwitch(this);
+        pickerAccelSwitch.setText("媒体选择器加速");
+        pickerAccelSwitch.setChecked(true);
+        pickerAccelSwitch.setEnabled(false);
+        pickerAccelSwitch.setOnCheckedChangeListener((button, checked) -> {
+            if (bindingUi) return;
+            SharedPreferences p = prefs();
+            if (p == null) return;
+            p.edit().putBoolean(GuardPrefs.KEY_PICKER_ACCEL, checked).apply();
+        });
+        root.addView(pickerAccelSwitch);
+
+        TextView pickerHint = new TextView(this);
+        pickerHint.setText("默认开启：短时分页缓存、下一页预取、本地缩略图预热和重复刷新合并。");
+        pickerHint.setPadding(0, 0, 0, dp(12));
+        root.addView(pickerHint);
 
         strictSwitch = new MaterialSwitch(this);
         strictSwitch.setText("默认隔离第三方目录");
@@ -84,21 +111,45 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
         });
         root.addView(strictSwitch);
 
-        TextView hint = new TextView(this);
-        hint.setText("相机、截图与 ColorOS 自身常用目录默认可见；其他目录默认不可见。下面只列你主动透传的第三方目录。");
-        hint.setPadding(0, dp(6), 0, dp(12));
-        root.addView(hint);
+        TextView appTitle = new TextView(this);
+        appTitle.setText("应用透传");
+        appTitle.setTextSize(19);
+        appTitle.setPadding(0, dp(14), 0, dp(4));
+        root.addView(appTitle);
 
-        addButton = new MaterialButton(this);
-        addButton.setText("添加透传目录");
-        addButton.setEnabled(false);
-        addButton.setOnClickListener(v -> openTreePicker());
-        root.addView(addButton);
+        TextView appHint = new TextView(this);
+        appHint.setText("微信、QQ、Telegram、WhatsApp、企业微信等常见通讯软件默认开启；也可搜索并选择任意应用。");
+        appHint.setPadding(0, 0, 0, dp(8));
+        root.addView(appHint);
 
-        list = new LinearLayout(this);
-        list.setOrientation(LinearLayout.VERTICAL);
-        list.setPadding(0, dp(12), 0, 0);
-        root.addView(list, new LinearLayout.LayoutParams(
+        appButton = new MaterialButton(this);
+        appButton.setText("选择应用透传（推荐）");
+        appButton.setEnabled(false);
+        appButton.setOnClickListener(v ->
+                startActivity(new Intent(this, AppSelectionActivity.class)));
+        root.addView(appButton);
+
+        TextView folderTitle = new TextView(this);
+        folderTitle.setText("文件夹透传");
+        folderTitle.setTextSize(19);
+        folderTitle.setPadding(0, dp(16), 0, dp(4));
+        root.addView(folderTitle);
+
+        TextView folderHint = new TextView(this);
+        folderHint.setText("保留传统目录选择，适合应用路径特殊、历史迁移目录或你自己整理的媒体目录。");
+        folderHint.setPadding(0, 0, 0, dp(8));
+        root.addView(folderHint);
+
+        folderButton = new MaterialButton(this);
+        folderButton.setText("添加透传文件夹");
+        folderButton.setEnabled(false);
+        folderButton.setOnClickListener(v -> openTreePicker());
+        root.addView(folderButton);
+
+        folderList = new LinearLayout(this);
+        folderList.setOrientation(LinearLayout.VERTICAL);
+        folderList.setPadding(0, dp(10), 0, 0);
+        root.addView(folderList, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setContentView(scroll);
@@ -121,7 +172,8 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
 
         try {
             int flags = data.getFlags()
-                    & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             getContentResolver().takePersistableUriPermission(uri, flags);
         } catch (Throwable ignored) {}
 
@@ -137,6 +189,7 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
         Set<String> next = new HashSet<>(
                 p.getStringSet(GuardPrefs.KEY_PASSTHROUGH_DIRS, Collections.emptySet()));
         next.add(path);
+
         p.edit()
                 .putStringSet(GuardPrefs.KEY_PASSTHROUGH_DIRS, next)
                 .putInt(GuardPrefs.KEY_POLICY_GENERATION,
@@ -154,6 +207,7 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
         Set<String> next = new HashSet<>(
                 p.getStringSet(GuardPrefs.KEY_PASSTHROUGH_DIRS, Collections.emptySet()));
         next.remove(path);
+
         p.edit()
                 .putStringSet(GuardPrefs.KEY_PASSTHROUGH_DIRS, next)
                 .putInt(GuardPrefs.KEY_POLICY_GENERATION,
@@ -168,32 +222,39 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
     }
 
     private void render() {
+        if (status == null) return;
+
         SharedPreferences p = prefs();
         if (p == null) {
             status.setText("LSPosed 服务未连接；请确认模块由支持 API 101/102 的框架管理。");
-            addButton.setEnabled(false);
+            folderButton.setEnabled(false);
+            appButton.setEnabled(false);
             strictSwitch.setEnabled(false);
-            list.removeAllViews();
+            pickerAccelSwitch.setEnabled(false);
+            folderList.removeAllViews();
             return;
         }
 
         status.setText("LSPosed 已连接 · 配置可热更新");
-        addButton.setEnabled(true);
+        folderButton.setEnabled(true);
+        appButton.setEnabled(true);
         strictSwitch.setEnabled(true);
+        pickerAccelSwitch.setEnabled(true);
 
         bindingUi = true;
         strictSwitch.setChecked(p.getBoolean(GuardPrefs.KEY_STRICT_ISOLATION, true));
+        pickerAccelSwitch.setChecked(p.getBoolean(GuardPrefs.KEY_PICKER_ACCEL, true));
         bindingUi = false;
 
         ArrayList<String> paths = new ArrayList<>(
                 p.getStringSet(GuardPrefs.KEY_PASSTHROUGH_DIRS, Collections.emptySet()));
         Collections.sort(paths);
 
-        list.removeAllViews();
+        folderList.removeAllViews();
         if (paths.isEmpty()) {
             TextView empty = new TextView(this);
-            empty.setText("尚未透传第三方目录");
-            list.addView(empty);
+            empty.setText("没有额外文件夹透传；应用透传仍会正常生效。");
+            folderList.addView(empty);
             return;
         }
 
@@ -214,7 +275,7 @@ public final class SettingsActivity extends AppCompatActivity implements XposedS
             remove.setOnClickListener(v -> removePath(path));
             row.addView(remove);
 
-            list.addView(row);
+            folderList.addView(row);
         }
     }
 
