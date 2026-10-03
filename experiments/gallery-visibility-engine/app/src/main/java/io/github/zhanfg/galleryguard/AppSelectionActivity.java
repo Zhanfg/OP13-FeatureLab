@@ -7,6 +7,7 @@ import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.text.Editable;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
@@ -23,13 +24,16 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.checkbox.MaterialCheckBox;
+import com.google.android.material.color.MaterialColors;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -43,9 +47,9 @@ import io.github.libxposed.service.XposedServiceHelper;
 /**
  * Searchable multi-select app picker.
  *
- * The user chooses apps, while AppMediaRegistry converts package names into media roots.
- * Default communication apps are checked on first run without forcing the user to scan hundreds
- * of entries one by one.
+ * Visual layout follows a Material 3 Expressive-style container hierarchy:
+ * page grid -> control surface -> app surface cards. Selection state is cached locally so
+ * RecyclerView binding never performs cross-process RemotePreferences reads.
  */
 public final class AppSelectionActivity extends AppCompatActivity
         implements XposedServiceHelper.OnServiceListener {
@@ -56,7 +60,10 @@ public final class AppSelectionActivity extends AppCompatActivity
     private RecyclerView recycler;
     private AppAdapter adapter;
     private TextInputEditText search;
+
     private final ArrayList<AppItem> allApps = new ArrayList<>();
+    private final HashSet<String> selectedPackages = new HashSet<>();
+    private final Collator collator = Collator.getInstance(Locale.getDefault());
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -64,6 +71,14 @@ public final class AppSelectionActivity extends AppCompatActivity
         buildUi();
         loadApps();
         app.addServiceListener(this, true);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (service != null) {
+            reloadSelectionFromPrefs();
+            if (adapter != null) adapter.filter(currentQuery());
+        }
     }
 
     @Override protected void onDestroy() {
@@ -81,31 +96,57 @@ public final class AppSelectionActivity extends AppCompatActivity
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("可搜索并多选任意应用；勾选后自动映射它的媒体目录。");
+        subtitle.setText("可搜索并多选任意应用；已选应用会自动置顶。");
         subtitle.setPadding(0, dp(4), 0, dp(10));
         root.addView(subtitle);
 
         status = new TextView(this);
         status.setText("正在连接 LSPosed…");
-        status.setPadding(0, 0, 0, dp(8));
+        status.setPadding(0, 0, 0, dp(10));
         root.addView(status);
+
+        MaterialCardView controlsCard = new MaterialCardView(this);
+        controlsCard.setRadius(dp(28));
+        controlsCard.setCardElevation(0f);
+        controlsCard.setStrokeWidth(0);
+        controlsCard.setCardBackgroundColor(MaterialColors.getColor(
+                controlsCard, com.google.android.material.R.attr.colorSurfaceContainer));
+        LinearLayout.LayoutParams controlsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        controlsLp.bottomMargin = dp(10);
+        root.addView(controlsCard, controlsLp);
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setPadding(dp(14), dp(14), dp(14), dp(14));
+        controlsCard.addView(controls, new MaterialCardView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextInputLayout searchBox = new TextInputLayout(this);
         searchBox.setHint("搜索应用或包名");
+        searchBox.setBoxBackgroundMode(TextInputLayout.BOX_BACKGROUND_FILLED);
+        searchBox.setBoxCornerRadii(dp(20), dp(20), dp(20), dp(20));
         search = new TextInputEditText(this);
         search.setSingleLine(true);
         searchBox.addView(search, new TextInputLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(searchBox);
+        controls.addView(searchBox, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         MaterialButton reset = new MaterialButton(this);
         reset.setText("恢复初始勾选");
+        reset.setCornerRadius(dp(22));
+        LinearLayout.LayoutParams resetLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        resetLp.topMargin = dp(10);
+        controls.addView(reset, resetLp);
         reset.setOnClickListener(v -> resetDefaults());
-        root.addView(reset);
 
         recycler = new RecyclerView(this);
         recycler.setLayoutManager(new LinearLayoutManager(this));
         recycler.setItemAnimator(null);
+        recycler.setClipToPadding(false);
+        recycler.setPadding(0, 0, 0, dp(24));
         adapter = new AppAdapter();
         recycler.setAdapter(adapter);
         root.addView(recycler, new LinearLayout.LayoutParams(
@@ -150,16 +191,12 @@ public final class AppSelectionActivity extends AppCompatActivity
             }
 
             ArrayList<AppItem> result = new ArrayList<>(unique.values());
-            Collator collator = Collator.getInstance(Locale.getDefault());
-            result.sort((a, b) -> {
-                int c = collator.compare(a.label, b.label);
-                return c != 0 ? c : a.packageName.compareTo(b.packageName);
-            });
+            result.sort(this::compareAlphabetically);
 
             runOnUiThread(() -> {
                 allApps.clear();
                 allApps.addAll(result);
-                adapter.filter(search.getText() == null ? "" : search.getText().toString());
+                adapter.filter(currentQuery());
             });
         }, "gallery-app-enumerator").start();
     }
@@ -168,17 +205,22 @@ public final class AppSelectionActivity extends AppCompatActivity
         return service == null ? null : service.getRemotePreferences(GuardPrefs.GROUP);
     }
 
-    private Set<String> selectedPackages() {
+    private void reloadSelectionFromPrefs() {
         SharedPreferences p = prefs();
-        if (p == null) return Collections.emptySet();
+        if (p == null) return;
 
+        Set<String> source;
         if (!p.contains(GuardPrefs.KEY_PASSTHROUGH_APPS)) {
-            return AppMediaRegistry.defaultCommunicationPackages();
+            source = AppMediaRegistry.defaultCommunicationPackages();
+        } else {
+            Set<String> saved = p.getStringSet(
+                    GuardPrefs.KEY_PASSTHROUGH_APPS, Collections.emptySet());
+            source = saved == null ? Collections.emptySet() : saved;
         }
 
-        Set<String> saved = p.getStringSet(
-                GuardPrefs.KEY_PASSTHROUGH_APPS, Collections.emptySet());
-        return saved == null ? Collections.emptySet() : new HashSet<>(saved);
+        selectedPackages.clear();
+        selectedPackages.addAll(source);
+        updateStatus();
     }
 
     private void setSelected(String packageName, boolean selected) {
@@ -188,55 +230,77 @@ public final class AppSelectionActivity extends AppCompatActivity
             return;
         }
 
-        Set<String> next = new HashSet<>(selectedPackages());
         if (selected) {
-            next.add(packageName);
+            selectedPackages.add(packageName);
         } else {
-            next.remove(packageName);
+            selectedPackages.remove(packageName);
         }
 
         p.edit()
-                .putStringSet(GuardPrefs.KEY_PASSTHROUGH_APPS, next)
+                .putStringSet(GuardPrefs.KEY_PASSTHROUGH_APPS,
+                        new HashSet<>(selectedPackages))
                 .putInt(GuardPrefs.KEY_POLICY_GENERATION,
                         p.getInt(GuardPrefs.KEY_POLICY_GENERATION, 0) + 1)
                 .apply();
 
-        // App passthrough works from MediaStore owner_package_name + known path mapping.
-        // Do not recursively scan every possible app directory here: that caused severe I/O
-        // spikes when several communication apps were enabled together.
-        adapter.notifyDataSetChanged();
+        updateStatus();
+        adapter.filter(currentQuery());
     }
 
     private void resetDefaults() {
         SharedPreferences p = prefs();
         if (p == null) return;
 
-        Set<String> defaults = AppMediaRegistry.defaultCommunicationPackages();
+        selectedPackages.clear();
+        selectedPackages.addAll(AppMediaRegistry.defaultCommunicationPackages());
+
         p.edit()
-                .putStringSet(GuardPrefs.KEY_PASSTHROUGH_APPS, defaults)
+                .putStringSet(GuardPrefs.KEY_PASSTHROUGH_APPS,
+                        new HashSet<>(selectedPackages))
                 .putInt(GuardPrefs.KEY_POLICY_GENERATION,
                         p.getInt(GuardPrefs.KEY_POLICY_GENERATION, 0) + 1)
                 .apply();
 
-        // Restoring defaults only updates policy. Existing MediaStore rows are re-indexed once
-        // by the debounced policy refresh; no per-app filesystem rescans.
-        adapter.notifyDataSetChanged();
+        updateStatus();
+        adapter.filter(currentQuery());
+    }
+
+    private String currentQuery() {
+        return search == null || search.getText() == null ? "" : search.getText().toString();
+    }
+
+    private void updateStatus() {
+        if (status == null) return;
+        if (service == null) {
+            status.setText("LSPosed 服务已断开");
+        } else {
+            status.setText("已连接 · 已选择 " + selectedPackages.size() + " 个应用");
+        }
+    }
+
+    private int compareAlphabetically(AppItem a, AppItem b) {
+        int c = collator.compare(a.label, b.label);
+        return c != 0 ? c : a.packageName.compareTo(b.packageName);
+    }
+
+    private int compareForDisplay(AppItem a, AppItem b) {
+        boolean aSelected = selectedPackages.contains(a.packageName);
+        boolean bSelected = selectedPackages.contains(b.packageName);
+        if (aSelected != bSelected) return aSelected ? -1 : 1;
+        return compareAlphabetically(a, b);
     }
 
     @Override public void onServiceBind(XposedService service) {
         this.service = service;
         runOnUiThread(() -> {
-            status.setText("已连接 · 勾选后立即热更新");
-            adapter.notifyDataSetChanged();
+            reloadSelectionFromPrefs();
+            adapter.filter(currentQuery());
         });
     }
 
     @Override public void onServiceDied(XposedService service) {
         if (this.service == service) this.service = null;
-        runOnUiThread(() -> {
-            status.setText("LSPosed 服务已断开");
-            adapter.notifyDataSetChanged();
-        });
+        runOnUiThread(this::updateStatus);
     }
 
     private final class AppAdapter extends RecyclerView.Adapter<AppViewHolder> {
@@ -246,50 +310,71 @@ public final class AppSelectionActivity extends AppCompatActivity
             String q = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
             visible.clear();
 
-            if (q.isEmpty()) {
-                visible.addAll(allApps);
-            } else {
-                for (AppItem item : allApps) {
-                    if (item.label.toLowerCase(Locale.ROOT).contains(q)
-                            || item.packageName.toLowerCase(Locale.ROOT).contains(q)) {
-                        visible.add(item);
-                    }
+            for (AppItem item : allApps) {
+                if (q.isEmpty()
+                        || item.label.toLowerCase(Locale.ROOT).contains(q)
+                        || item.packageName.toLowerCase(Locale.ROOT).contains(q)) {
+                    visible.add(item);
                 }
             }
+
+            visible.sort(AppSelectionActivity.this::compareForDisplay);
             notifyDataSetChanged();
         }
 
         @NonNull @Override public AppViewHolder onCreateViewHolder(
                 @NonNull ViewGroup parent, int viewType) {
+
+            MaterialCardView card = new MaterialCardView(parent.getContext());
+            card.setRadius(dp(24));
+            card.setCardElevation(0f);
+            card.setClickable(true);
+            card.setFocusable(true);
+
+            RecyclerView.LayoutParams cardLp = new RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            cardLp.topMargin = dp(4);
+            cardLp.bottomMargin = dp(4);
+            card.setLayoutParams(cardLp);
+
             LinearLayout row = new LinearLayout(parent.getContext());
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(0, dp(8), 0, dp(8));
-            row.setLayoutParams(new RecyclerView.LayoutParams(
+            row.setMinimumHeight(dp(76));
+            row.setPadding(dp(14), dp(10), dp(10), dp(10));
+            card.addView(row, new MaterialCardView.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT));
 
             ImageView icon = new ImageView(parent.getContext());
-            row.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
+            LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(48), dp(48));
+            row.addView(icon, iconLp);
 
             LinearLayout textBox = new LinearLayout(parent.getContext());
             textBox.setOrientation(LinearLayout.VERTICAL);
-            textBox.setPadding(dp(12), 0, dp(8), 0);
+            textBox.setPadding(dp(14), 0, dp(8), 0);
 
             TextView label = new TextView(parent.getContext());
             label.setTextSize(16);
-            textBox.addView(label);
+            label.setSingleLine(true);
+            label.setEllipsize(TextUtils.TruncateAt.END);
+            textBox.addView(label, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             TextView pkg = new TextView(parent.getContext());
             pkg.setTextSize(12);
-            textBox.addView(pkg);
+            pkg.setSingleLine(true);
+            pkg.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+            textBox.addView(pkg, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
             row.addView(textBox, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
             FrameLayout checkSlot = new FrameLayout(parent.getContext());
             LinearLayout.LayoutParams slotLp =
-                    new LinearLayout.LayoutParams(dp(56), dp(56));
+                    new LinearLayout.LayoutParams(dp(48), dp(56));
             row.addView(checkSlot, slotLp);
 
             MaterialCheckBox check = new MaterialCheckBox(parent.getContext());
@@ -301,24 +386,43 @@ public final class AppSelectionActivity extends AppCompatActivity
                     new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER);
             checkSlot.addView(check, checkLp);
 
-            return new AppViewHolder(row, icon, label, pkg, check);
+            return new AppViewHolder(card, icon, label, pkg, check);
         }
 
         @Override public void onBindViewHolder(@NonNull AppViewHolder h, int position) {
             AppItem item = visible.get(position);
-            Set<String> selected = selectedPackages();
+            boolean selected = selectedPackages.contains(item.packageName);
 
             h.icon.setImageDrawable(item.icon);
             h.label.setText(item.label);
             h.pkg.setText(item.packageName);
 
-            h.check.setOnCheckedChangeListener(null);
-            h.check.setChecked(selected.contains(item.packageName));
-            h.check.setEnabled(service != null);
+            int backgroundAttr = selected
+                    ? com.google.android.material.R.attr.colorSecondaryContainer
+                    : com.google.android.material.R.attr.colorSurfaceContainerLow;
+            int labelAttr = selected
+                    ? com.google.android.material.R.attr.colorOnSecondaryContainer
+                    : com.google.android.material.R.attr.colorOnSurface;
+            int packageAttr = selected
+                    ? com.google.android.material.R.attr.colorOnSecondaryContainer
+                    : com.google.android.material.R.attr.colorOnSurfaceVariant;
 
+            h.card.setCardBackgroundColor(MaterialColors.getColor(h.card, backgroundAttr));
+            h.card.setStrokeWidth(selected ? dp(1) : 0);
+            if (selected) {
+                h.card.setStrokeColor(MaterialColors.getColor(
+                        h.card, com.google.android.material.R.attr.colorOutlineVariant));
+            }
+            h.label.setTextColor(MaterialColors.getColor(h.card, labelAttr));
+            h.pkg.setTextColor(MaterialColors.getColor(h.card, packageAttr));
+
+            h.check.setOnCheckedChangeListener(null);
+            h.check.setChecked(selected);
+            h.check.setEnabled(service != null);
             h.check.setOnCheckedChangeListener(
                     (button, checked) -> setSelected(item.packageName, checked));
-            h.itemView.setOnClickListener(v -> {
+
+            h.card.setOnClickListener(v -> {
                 if (service != null) h.check.toggle();
             });
         }
@@ -329,14 +433,16 @@ public final class AppSelectionActivity extends AppCompatActivity
     }
 
     private static final class AppViewHolder extends RecyclerView.ViewHolder {
+        final MaterialCardView card;
         final ImageView icon;
         final TextView label;
         final TextView pkg;
         final MaterialCheckBox check;
 
-        AppViewHolder(View itemView, ImageView icon, TextView label,
+        AppViewHolder(MaterialCardView card, ImageView icon, TextView label,
                       TextView pkg, MaterialCheckBox check) {
-            super(itemView);
+            super(card);
+            this.card = card;
             this.icon = icon;
             this.label = label;
             this.pkg = pkg;
