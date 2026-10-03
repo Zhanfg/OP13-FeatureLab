@@ -3,6 +3,7 @@ package io.github.zhanfg.galleryguard;
 import static android.util.Log.DEBUG;
 import static android.util.Log.INFO;
 
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -33,6 +34,9 @@ public class MainHook extends XposedModule implements HookLogger {
     public static final String TAG = "GalleryNomediaGuard";
 
     private ClassLoader mAppClassLoader;
+    private String mProcessName;
+    private String mPackageName;
+    private SharedPreferences mPrefs;
 
     private static int sHookOk;
     private static int sHookFail;
@@ -49,11 +53,13 @@ public class MainHook extends XposedModule implements HookLogger {
     public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
         sInstance = this;
         Debug.sLogger = this;
+        mProcessName = param.getProcessName();
         try {
-            VisibilityPolicy.bind(getRemotePreferences(GuardPrefs.GROUP),
-                    MediaQueryFilter::onVisibilityPolicyChanged);
-            log(INFO, TAG, "visibility policy bound, api102 module loaded");
+            mPrefs = getRemotePreferences(GuardPrefs.GROUP);
+            VisibilityPolicy.bind(mPrefs, MediaQueryFilter::onVisibilityPolicyChanged);
+            log(INFO, TAG, "module loaded, process=" + mProcessName + ", prefs=remote");
         } catch (Throwable t) {
+            mPrefs = null;
             VisibilityPolicy.bind(null, null);
             log(INFO, TAG, "remote prefs unavailable, using safe defaults: " + t);
         }
@@ -63,11 +69,24 @@ public class MainHook extends XposedModule implements HookLogger {
     public void onPackageReady(XposedModuleInterface.PackageReadyParam param) {
         ClassLoader cl = param.getClassLoader();
         mAppClassLoader = cl;
-        // v1.1.9: 注入相册 App ClassLoader，供反射驱动相册自身 MediaSync(loo) 用
-        MediaQueryFilter.sAppClassLoader = cl;
-        log(INFO, TAG, "[pkg] onPackageReady, classLoader=" + (cl != null ? "non-null" : "NULL!"));
-        installHooks(cl);
-        startHiddenIdIndexer(cl);
+        mPackageName = param.getPackageName();
+
+        log(INFO, TAG, "[pkg] ready package=" + mPackageName
+                + " process=" + mProcessName
+                + " classLoader=" + (cl != null ? "non-null" : "NULL!"));
+
+        if ("com.coloros.gallery3d".equals(mPackageName)) {
+            // Gallery-only hooks and state.
+            MediaQueryFilter.sAppClassLoader = cl;
+            installGalleryHooks(cl);
+            startHiddenIdIndexer(cl);
+            return;
+        }
+
+        if (PhotoPickerAccelerator.isPickerPackage(mPackageName)
+                && PhotoPickerAccelerator.shouldInstallInProcess(mPackageName, mProcessName)) {
+            PhotoPickerAccelerator.install(this, mPrefs);
+        }
     }
 
     @Override
@@ -89,9 +108,16 @@ public class MainHook extends XposedModule implements HookLogger {
         }
         if (cl == null) cl = mAppClassLoader;
         if (cl == null) return;
-        installHooks(cl);
+
+        if ("com.coloros.gallery3d".equals(mPackageName)) {
+            installGalleryHooks(cl);
+        } else if (PhotoPickerAccelerator.isPickerPackage(mPackageName)
+                && PhotoPickerAccelerator.shouldInstallInProcess(mPackageName, mProcessName)) {
+            PhotoPickerAccelerator.install(this, mPrefs);
+        }
+
         restoreModuleState();
-        log(INFO, TAG, "hot reloaded, hooks reinstalled");
+        log(INFO, TAG, "hot reloaded, hooks reinstalled for " + mPackageName);
     }
 
     // ===== 静态日志桥（供 static hooker 用）=====
@@ -106,9 +132,9 @@ public class MainHook extends XposedModule implements HookLogger {
         }
     }
 
-    // ===== installHooks =====
+    // ===== Gallery hooks =====
 
-    private void installHooks(ClassLoader cl) {
+    private void installGalleryHooks(ClassLoader cl) {
         sHookDetail = new StringBuilder();
         sHookOk = sHookFail = 0;
 
@@ -139,9 +165,17 @@ public class MainHook extends XposedModule implements HookLogger {
         //    从源头掐掉"旧列表先渲染再对账"的闪烁。
         hookGalleryProviderQuery(cl);
 
-        log(INFO, TAG, "installHooks done: " + sHookOk + " OK / " + sHookFail + " FAIL / \n" + sHookDetail);
+        log(INFO, TAG, "installGalleryHooks done: " + sHookOk + " OK / " + sHookFail + " FAIL / \n" + sHookDetail);
         sHookOk = sHookFail = 0;
         sHookDetail.setLength(0);
+    }
+
+    /**
+     * Package-private bridge for isolated helper components such as PhotoPickerAccelerator.
+     * Keeps access to XposedModule#hook inside this module entry point.
+     */
+    void installExternalHook(Method method, XposedInterface.Hooker hooker) {
+        hook(method).intercept(hooker);
     }
 
     // ===== hook 辅助 =====
