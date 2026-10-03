@@ -58,12 +58,9 @@ public final class SettingsActivity extends AppCompatActivity
     }
 
     private void buildUi() {
-        int pad = dp(20);
-
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(pad, pad, pad, pad);
         scroll.addView(root, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -118,12 +115,12 @@ public final class SettingsActivity extends AppCompatActivity
         root.addView(appTitle);
 
         TextView appHint = new TextView(this);
-        appHint.setText("微信、QQ、Telegram、WhatsApp、企业微信等常见通讯软件默认开启；也可搜索并选择任意应用。");
+        appHint.setText("选择需要透传媒体的应用；支持搜索和多选。");
         appHint.setPadding(0, 0, 0, dp(8));
         root.addView(appHint);
 
         appButton = new MaterialButton(this);
-        appButton.setText("选择应用透传（推荐）");
+        appButton.setText("选择应用透传");
         appButton.setEnabled(false);
         appButton.setOnClickListener(v ->
                 startActivity(new Intent(this, AppSelectionActivity.class)));
@@ -153,6 +150,7 @@ public final class SettingsActivity extends AppCompatActivity
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         setContentView(scroll);
+        EdgeToEdgeInsets.apply(this, root, 20, 12, 16);
     }
 
     private void openTreePicker() {
