@@ -206,12 +206,9 @@ public final class AppSelectionActivity extends AppCompatActivity
                         p.getInt(GuardPrefs.KEY_POLICY_GENERATION, 0) + 1)
                 .apply();
 
-        if (selected) {
-            for (String root : AppMediaRegistry.rootsForPackage(packageName)) {
-                PassthroughScanner.scanAsync(this, root);
-            }
-        }
-
+        // App passthrough works from MediaStore owner_package_name + known path mapping.
+        // Do not recursively scan every possible app directory here: that caused severe I/O
+        // spikes when several communication apps were enabled together.
         adapter.notifyDataSetChanged();
     }
 
@@ -226,11 +223,8 @@ public final class AppSelectionActivity extends AppCompatActivity
                         p.getInt(GuardPrefs.KEY_POLICY_GENERATION, 0) + 1)
                 .apply();
 
-        for (String pkg : defaults) {
-            for (String root : AppMediaRegistry.rootsForPackage(pkg)) {
-                PassthroughScanner.scanAsync(this, root);
-            }
-        }
+        // Restoring defaults only updates policy. Existing MediaStore rows are re-indexed once
+        // by the debounced policy refresh; no per-app filesystem rescans.
         adapter.notifyDataSetChanged();
     }
 
