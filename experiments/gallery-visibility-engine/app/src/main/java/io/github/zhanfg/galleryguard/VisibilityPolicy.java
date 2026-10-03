@@ -11,8 +11,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 默认拒绝第三方媒体、显式透传优先、系统可信目录默认放行。
- * 热路径只做字符串前缀与目录级缓存；仅可信目录需要检查 .nomedia。
+ * Visibility policy:
+ * 1) explicit folder passthrough;
+ * 2) selected-app passthrough (generic Android/media + known compatibility roots);
+ * 3) trusted system media roots;
+ * 4) everything else hidden while strict isolation is enabled.
+ *
+ * Explicit passthrough intentionally wins over .nomedia: choosing an app/folder means
+ * the user is explicitly asking Gallery/Picker to surface that media.
  */
 public final class VisibilityPolicy {
     private static final String STORAGE = "/storage/emulated/0";
@@ -28,13 +34,20 @@ public final class VisibilityPolicy {
     private static final AtomicLong GENERATION = new AtomicLong(1);
 
     private static volatile boolean strictIsolation = true;
-    private static volatile Set<String> passthrough = Collections.emptySet();
+    private static volatile Set<String> passthroughDirs = Collections.emptySet();
+    private static volatile Set<String> passthroughApps =
+            Collections.unmodifiableSet(AppMediaRegistry.defaultCommunicationPackages());
+    private static volatile Set<String> appPassthroughRoots =
+            Collections.unmodifiableSet(
+                    AppMediaRegistry.resolveRoots(AppMediaRegistry.defaultCommunicationPackages()));
+
     private static volatile SharedPreferences prefs;
     private static volatile Runnable onChanged;
 
     private static final SharedPreferences.OnSharedPreferenceChangeListener LISTENER = (p, key) -> {
         if (GuardPrefs.KEY_STRICT_ISOLATION.equals(key)
                 || GuardPrefs.KEY_PASSTHROUGH_DIRS.equals(key)
+                || GuardPrefs.KEY_PASSTHROUGH_APPS.equals(key)
                 || GuardPrefs.KEY_POLICY_GENERATION.equals(key)) {
             reload(p);
             Runnable r = onChanged;
@@ -46,34 +59,73 @@ public final class VisibilityPolicy {
 
     public static synchronized void bind(SharedPreferences p, Runnable changed) {
         if (prefs != null) {
-            try { prefs.unregisterOnSharedPreferenceChangeListener(LISTENER); } catch (Throwable ignored) {}
+            try {
+                prefs.unregisterOnSharedPreferenceChangeListener(LISTENER);
+            } catch (Throwable ignored) {}
         }
+
         prefs = p;
         onChanged = changed;
+
         if (p != null) {
             reload(p);
-            try { p.registerOnSharedPreferenceChangeListener(LISTENER); } catch (Throwable ignored) {}
+            try {
+                p.registerOnSharedPreferenceChangeListener(LISTENER);
+            } catch (Throwable ignored) {}
         } else {
             strictIsolation = true;
-            passthrough = Collections.emptySet();
+            passthroughDirs = Collections.emptySet();
+            passthroughApps = Collections.unmodifiableSet(
+                    AppMediaRegistry.defaultCommunicationPackages());
+            appPassthroughRoots = Collections.unmodifiableSet(
+                    AppMediaRegistry.resolveRoots(passthroughApps));
             invalidate();
         }
     }
 
     private static void reload(SharedPreferences p) {
         strictIsolation = p.getBoolean(GuardPrefs.KEY_STRICT_ISOLATION, true);
-        Set<String> raw;
+
+        HashSet<String> dirs = new HashSet<>();
         try {
-            raw = p.getStringSet(GuardPrefs.KEY_PASSTHROUGH_DIRS, Collections.emptySet());
+            Set<String> raw = p.getStringSet(
+                    GuardPrefs.KEY_PASSTHROUGH_DIRS, Collections.emptySet());
+            if (raw != null) {
+                for (String v : raw) {
+                    String n = normalize(v);
+                    if (n != null) dirs.add(n);
+                }
+            }
+        } catch (Throwable ignored) {}
+        passthroughDirs = Collections.unmodifiableSet(dirs);
+
+        Set<String> appSource;
+        try {
+            if (p.contains(GuardPrefs.KEY_PASSTHROUGH_APPS)) {
+                Set<String> saved = p.getStringSet(
+                        GuardPrefs.KEY_PASSTHROUGH_APPS, Collections.emptySet());
+                appSource = saved == null ? Collections.emptySet() : saved;
+            } else {
+                // First-run default: communication apps are allowed automatically.
+                appSource = AppMediaRegistry.defaultCommunicationPackages();
+            }
         } catch (Throwable t) {
-            raw = Collections.emptySet();
+            appSource = AppMediaRegistry.defaultCommunicationPackages();
         }
-        HashSet<String> clean = new HashSet<>();
-        for (String v : raw) {
-            String n = normalize(v);
-            if (n != null) clean.add(n);
+
+        HashSet<String> apps = new HashSet<>();
+        for (String pkg : appSource) {
+            if (pkg != null && !pkg.trim().isEmpty()) apps.add(pkg.trim());
         }
-        passthrough = Collections.unmodifiableSet(clean);
+        passthroughApps = Collections.unmodifiableSet(apps);
+
+        HashSet<String> roots = new HashSet<>();
+        for (String root : AppMediaRegistry.resolveRoots(apps)) {
+            String n = normalize(root);
+            if (n != null) roots.add(n);
+        }
+        appPassthroughRoots = Collections.unmodifiableSet(roots);
+
         invalidate();
     }
 
@@ -82,11 +134,14 @@ public final class VisibilityPolicy {
         DIR_CACHE.clear();
     }
 
-    public static long generation() { return GENERATION.get(); }
+    public static long generation() {
+        return GENERATION.get();
+    }
 
     public static boolean shouldHide(String filePath) {
         String normalized = normalize(filePath);
         if (normalized == null) return false;
+
         File f = new File(normalized);
         String dir = normalize(f.getParent());
         if (dir == null) return false;
@@ -100,13 +155,12 @@ public final class VisibilityPolicy {
     }
 
     private static boolean computeHidden(String dir) {
-        // 用户显式透传优先：第三方 App 自带 .nomedia 时也按用户选择显示。
-        if (matchesAnyPrefix(dir, passthrough)) return false;
+        if (matchesAnyPrefix(dir, passthroughDirs)) return false;
+        if (matchesAnyPrefix(dir, appPassthroughRoots)) return false;
 
         boolean trusted = matchesAnyPrefix(dir, TRUSTED_PREFIXES);
         if (!trusted && strictIsolation) return true;
 
-        // 可信目录或关闭严格隔离时，仍遵守传统 .nomedia。
         File cursor = new File(dir);
         while (cursor != null) {
             String p = normalize(cursor.getAbsolutePath());
@@ -115,7 +169,9 @@ public final class VisibilityPolicy {
             if (STORAGE.equals(p)
                     || "/storage/emulated".equals(p)
                     || "/storage".equals(p)
-                    || "/".equals(p)) break;
+                    || "/".equals(p)) {
+                break;
+            }
             cursor = cursor.getParentFile();
         }
         return false;
@@ -146,12 +202,18 @@ public final class VisibilityPolicy {
         String p = path.trim().replace('\\', '/');
         if (p.isEmpty()) return null;
         while (p.contains("//")) p = p.replace("//", "/");
-        if (p.length() > 1 && p.endsWith("/")) p = p.substring(0, p.length() - 1);
+        if (p.length() > 1 && p.endsWith("/")) {
+            p = p.substring(0, p.length() - 1);
+        }
         return p;
     }
 
     public static Set<String> passthroughSnapshot() {
-        return new HashSet<>(passthrough);
+        return new HashSet<>(passthroughDirs);
+    }
+
+    public static Set<String> passthroughAppsSnapshot() {
+        return new HashSet<>(passthroughApps);
     }
 
     public static ArrayList<String> trustedSnapshot() {
