@@ -65,7 +65,18 @@ public class MediaQueryFilter {
      * 加/删 .nomedia 不产生 MediaStore 通知，相册不会自动重查 →
      * 模块在相册 Activity onResume / watcher 事件时反射驱动相册自身同步链对账刷新。
      */
-    private static final java.util.concurrent.atomic.AtomicLong sLastNotifyTs = new java.util.concurrent.atomic.AtomicLong(0L);
+    private static final java.util.concurrent.atomic.AtomicLong sLastNotifyTs =
+            new java.util.concurrent.atomic.AtomicLong(0L);
+
+    /** 只有可见性/nomedia 规则变化才需要额外驱动 ColorOS FullSync。 */
+    private static final java.util.concurrent.atomic.AtomicLong sSyncDirtyGeneration =
+            new java.util.concurrent.atomic.AtomicLong(1L);
+    private static final java.util.concurrent.atomic.AtomicLong sSyncConsumedGeneration =
+            new java.util.concurrent.atomic.AtomicLong(0L);
+
+    /** 合并连续的设置变更，避免每勾选一个 App 都全库扫描 + purge + FullSync。 */
+    private static final java.util.concurrent.atomic.AtomicLong sPolicyRefreshSerial =
+            new java.util.concurrent.atomic.AtomicLong(0L);
 
     /** Application 引用（预索引/resume 通知用），由 MainHook 启动时注入 */
     static volatile android.content.Context sAppContext;
@@ -301,35 +312,55 @@ public class MediaQueryFilter {
     //    模块 notifyChange = 同 uid 自通知 → ContentService 不投递 → v1.2~1.1.8 的
     //    "resume notify 驱动刷新"实际全部无效，只有冷启动（进程重建自查）才生效。
 
+    /** 标记：只有规则真的变化时，下一次才需要额外对账。 */
+    public static void markGallerySyncDirty() {
+        sSyncDirtyGeneration.incrementAndGet();
+    }
+
     /**
-     * resume 强制驱动（v1.1.9，替代 1.1.8 的 notify 强制通知）：无条件驱动相册 MediaSync。
-     * 前台 resume = 用户回前台，UI 最可能重查的时机，不可节流丢弃。
+     * Gallery Activity resume 的轻量路径：
+     * 没有 .nomedia/透传策略变化时直接 O(1) 返回，不再每次 resume 触发 FullSync。
      */
-    public static void driveGallerySyncForce() {
-        android.content.Context ctx = sAppContext;
-        if (ctx == null) return;
+    public static void driveGallerySyncOnResumeIfDirty() {
+        if (sAppContext == null) return;
+
+        long dirty = sSyncDirtyGeneration.get();
+        long consumed = sSyncConsumedGeneration.get();
+        if (dirty == consumed) return;
+
+        if (!sSyncConsumedGeneration.compareAndSet(consumed, dirty)) return;
+
         long now = System.currentTimeMillis();
         sLastNotifyTs.set(now);
         driveGalleryMediaSync();
+
         // #ifdef DEBUG
         if (BuildConfig.DEBUG) {
-            Debug.d(TAG, "SYNC-DRIVE[force]: onResume 驱动相册 MediaSync 对账");
+            Debug.d(TAG, "SYNC-DRIVE[dirty-resume]: generation=" + dirty);
         }
         // #endif
     }
 
-    /** 节流版（watcher/后台事件用）：3s 内不重复驱动 */
+    /** 节流版（watcher/后台事件用）：只对真实规则变化触发，3s 内不重复驱动。 */
     public static void driveGallerySyncIfNeeded() {
         android.content.Context ctx = sAppContext;
         if (ctx == null) return;
+
+        long dirty = sSyncDirtyGeneration.get();
+        long consumed = sSyncConsumedGeneration.get();
+        if (dirty == consumed) return;
+
         long now = System.currentTimeMillis();
         long last = sLastNotifyTs.get();
-        if (now - last < 3000) return;                 // 节流
-        if (!sLastNotifyTs.compareAndSet(last, now)) return; // 并发去重
+        if (now - last < 3000) return;
+        if (!sLastNotifyTs.compareAndSet(last, now)) return;
+
         driveGalleryMediaSync();
+        sSyncConsumedGeneration.set(dirty);
+
         // #ifdef DEBUG
         if (BuildConfig.DEBUG) {
-            Debug.d(TAG, "SYNC-DRIVE: 反射驱动相册 MediaSync 对账(.nomedia 变化)");
+            Debug.d(TAG, "SYNC-DRIVE[dirty]: generation=" + dirty);
         }
         // #endif
     }
@@ -389,15 +420,27 @@ public class MediaQueryFilter {
      * 真正扫描放后台，避免阻塞 Binder / UI。
      */
     public static void onVisibilityPolicyChanged() {
-        VisibilityPolicy.invalidate();
-        sHiddenIds.clear();
-        sIndexBuilt = false;
+        // VisibilityPolicy.reload() 已经 invalidate，这里只负责把昂贵工作合并执行。
         final Context ctx = sAppContext;
+        markGallerySyncDirty();
         if (ctx == null) return;
+
+        final long serial = sPolicyRefreshSerial.incrementAndGet();
         Thread t = new Thread(() -> {
+            try {
+                Thread.sleep(450);
+            } catch (InterruptedException e) {
+                return;
+            }
+
+            // 450ms 内又有新的多选操作：旧任务直接取消，最后一次统一处理。
+            if (serial != sPolicyRefreshSerial.get()) return;
+
+            sHiddenIds.clear();
+            sIndexBuilt = false;
             buildHiddenIdIndex(ctx);
             purgeLocalMediaForHiddenDirs(ctx);
-            driveGallerySyncForce();
+            driveGallerySyncIfNeeded();
         }, "gallery-policy-refresh");
         t.setDaemon(true);
         t.start();
@@ -459,7 +502,8 @@ public class MediaQueryFilter {
                 }
                 logMark("SCAN-DIR: .nomedia 已移除, 重扫 " + dirPath + " 下 "
                         + files.size() + " 个媒体文件 → MediaStore 入库");
-                // scan 后 MediaStore notify 通常自动触发相册 FullSync；兜底显式驱动一次
+                // scan 后 MediaStore notify 通常自动触发；仅 nomedia 规则变化时兜底对账。
+                markGallerySyncDirty();
                 driveGallerySyncIfNeeded();
             } catch (Throwable t) {
                 logMark("SCAN-DIR fail: " + dirPath + " e=" + t);
@@ -560,7 +604,8 @@ public class MediaQueryFilter {
                                     } else if (removed) {
                                         rescanMediaAfterNomediaRemoved(sAppContext, watchDirAbs);
                                     }
-                                    driveGallerySyncIfNeeded();  // 节流 + 反射驱动相册 MediaSync
+                                    markGallerySyncDirty();
+                                    driveGallerySyncIfNeeded();  // 仅真实 .nomedia 变化才驱动
                                 }
                             }
                         };
