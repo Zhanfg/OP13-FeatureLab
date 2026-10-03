@@ -344,6 +344,8 @@ public class MainHook extends XposedModule implements HookLogger {
                 // v1.3.0: 启动兜底清洗——冷启动时把已存在 .nomedia 目录的 local_media
                 //         残留行删掉(不重开相册也隐藏)；watcher 管后续新增。同一后台线程。
                 MediaQueryFilter.purgeLocalMediaForHiddenDirs((android.content.Context) app);
+                MediaQueryFilter.markGallerySyncDirty();
+                MediaQueryFilter.driveGallerySyncIfNeeded();
             } else {
                 // #ifdef DEBUG
                 if (BuildConfig.DEBUG) {
@@ -397,7 +399,7 @@ public class MainHook extends XposedModule implements HookLogger {
         @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
             Object result = chain.proceed();
             try {
-                MediaQueryFilter.driveGallerySyncForce();
+                MediaQueryFilter.driveGallerySyncOnResumeIfDirty();
             } catch (Throwable ignored) {
                 // 驱动失败不影响相册生命周期
             }
