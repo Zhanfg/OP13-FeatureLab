@@ -11,6 +11,7 @@ import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -264,6 +265,9 @@ public final class AppSelectionActivity extends AppCompatActivity
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(0, dp(8), 0, dp(8));
+            row.setLayoutParams(new RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
 
             ImageView icon = new ImageView(parent.getContext());
             row.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -283,14 +287,19 @@ public final class AppSelectionActivity extends AppCompatActivity
             row.addView(textBox, new LinearLayout.LayoutParams(
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+            FrameLayout checkSlot = new FrameLayout(parent.getContext());
+            LinearLayout.LayoutParams slotLp =
+                    new LinearLayout.LayoutParams(dp(56), dp(56));
+            row.addView(checkSlot, slotLp);
+
             MaterialCheckBox check = new MaterialCheckBox(parent.getContext());
-            check.setMinWidth(dp(48));
-            check.setMinimumWidth(dp(48));
-            check.setMinHeight(dp(48));
-            check.setMinimumHeight(dp(48));
-            LinearLayout.LayoutParams checkLp =
-                    new LinearLayout.LayoutParams(dp(48), dp(48));
-            row.addView(check, checkLp);
+            check.setMinWidth(0);
+            check.setMinimumWidth(0);
+            check.setMinHeight(0);
+            check.setMinimumHeight(0);
+            FrameLayout.LayoutParams checkLp =
+                    new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER);
+            checkSlot.addView(check, checkLp);
 
             return new AppViewHolder(row, icon, label, pkg, check);
         }
