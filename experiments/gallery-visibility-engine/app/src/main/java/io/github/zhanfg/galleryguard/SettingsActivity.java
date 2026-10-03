@@ -91,7 +91,7 @@ public final class SettingsActivity extends AppCompatActivity
         root.addView(pickerAccelSwitch);
 
         TextView pickerHint = new TextView(this);
-        pickerHint.setText("默认开启：短时分页缓存、下一页预取、本地缩略图预热和重复刷新合并。");
+        pickerHint.setText("默认开启安全加速：保留系统实时刷新，只在后台预取下一页，不缓存当前结果、不吞刷新事件。");
         pickerHint.setPadding(0, 0, 0, dp(12));
         root.addView(pickerHint);
 
