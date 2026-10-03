@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".GalleryGuardApp"
         android:allowBackup="false"
@@ -8,7 +16,11 @@
 
         <meta-data
             android:name="xposeddescription"
-            android:value="ColorOS 相册默认隔离第三方媒体，仅透传用户允许目录，并保留 .nomedia 防护。" />
+            android:value="ColorOS 相册第三方媒体隔离、应用/目录透传与 Android Photo Picker 加速。" />
+
+        <activity
+            android:name=".AppSelectionActivity"
+            android:exported="false" />
 
         <activity
             android:name=".SettingsActivity"
