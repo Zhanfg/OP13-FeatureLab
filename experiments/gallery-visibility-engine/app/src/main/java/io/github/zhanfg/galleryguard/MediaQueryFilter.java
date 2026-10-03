@@ -136,7 +136,7 @@ public class MediaQueryFilter {
             ContentResolver cr = ctx.getContentResolver();
             c = cr.query(
                     MediaStore.Files.getContentUri("external"),
-                    new String[] { "_id", "_data" },
+                    new String[] { "_id", "_data", "owner_package_name" },
                     MediaStore.Files.FileColumns.MEDIA_TYPE + " IN (?,?)",
                     new String[] {
                         String.valueOf(MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE),
@@ -147,13 +147,21 @@ public class MediaQueryFilter {
             if (c != null && c.moveToFirst()) {
                 int idCol = c.getColumnIndex("_id");
                 int dataCol = c.getColumnIndex("_data");
+                int ownerCol = c.getColumnIndex("owner_package_name");
                 if (idCol >= 0 && dataCol >= 0) {
                     do {
                         String data;
+                        String owner = null;
                         try { data = c.getString(dataCol); } catch (Throwable t) { data = null; }
-                        if (data != null && !data.isEmpty() && isHiddenPath(data)) {
-                            sHiddenIds.add(c.getLong(idCol));
-                            added++;
+                        if (ownerCol >= 0) {
+                            try { owner = c.getString(ownerCol); } catch (Throwable ignored) {}
+                        }
+                        if (data != null && !data.isEmpty()) {
+                            VisibilityPolicy.rememberOwnerAllowedPath(data, owner);
+                            if (isHiddenPath(data)) {
+                                sHiddenIds.add(c.getLong(idCol));
+                                added++;
+                            }
                         }
                     } while (c.moveToNext());
                 }
@@ -611,6 +619,7 @@ public class MediaQueryFilter {
         private final boolean mFeedIdIndex; // MODE_DATA 命中时是否顺手把 _id 喂入 sHiddenIds
         private final int mDataCol;   // MODE_DATA 用（可能 -1）
         private final int mIdCol;     // MODE_ID 用（可能 -1）
+        private final int mOwnerCol;  // owner_package_name（可能 -1）
         private final ArrayList<Integer> mVisible = new ArrayList<>();
         private int mPos = -1;          // 逻辑当前位置（-1 = beforeFirst）
         private int mHiddenCount;       // 被过滤掉的行数（调试用）
@@ -627,6 +636,7 @@ public class MediaQueryFilter {
             mFeedIdIndex = feedIdIndex;
             mDataCol = inner.getColumnIndex("_data");
             mIdCol = inner.getColumnIndex("_id");
+            mOwnerCol = inner.getColumnIndex("owner_package_name");
             build();
         }
 
@@ -661,7 +671,13 @@ public class MediaQueryFilter {
             if (mMode == MODE_DATA) {
                 String data;
                 try { data = mInner.getString(mDataCol); } catch (Throwable t) { data = null; }
-                if (data == null || data.isEmpty() || !isHiddenPath(data)) return false;
+                if (data == null || data.isEmpty()) return false;
+                if (mOwnerCol >= 0) {
+                    try {
+                        VisibilityPolicy.rememberOwnerAllowedPath(data, mInner.getString(mOwnerCol));
+                    } catch (Throwable ignored) {}
+                }
+                if (!isHiddenPath(data)) return false;
                 if (mHiddenSample == null) mHiddenSample = data;
                 // 顺手把 _id 喂进集合（实时增量，让后续无 _data 查询也能过滤）。
                 // ⚠️ 仅 content://media 查询可喂（_id = MediaStore._id）；
