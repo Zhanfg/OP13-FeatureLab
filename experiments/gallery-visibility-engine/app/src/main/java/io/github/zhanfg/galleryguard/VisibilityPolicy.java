@@ -31,6 +31,7 @@ public final class VisibilityPolicy {
     };
 
     private static final ConcurrentHashMap<String, Boolean> DIR_CACHE = new ConcurrentHashMap<>();
+    private static final Set<String> OWNER_ALLOWED_PATHS = ConcurrentHashMap.newKeySet();
     private static final AtomicLong GENERATION = new AtomicLong(1);
 
     private static volatile boolean strictIsolation = true;
@@ -132,6 +133,7 @@ public final class VisibilityPolicy {
     public static void invalidate() {
         GENERATION.incrementAndGet();
         DIR_CACHE.clear();
+        OWNER_ALLOWED_PATHS.clear();
     }
 
     public static long generation() {
@@ -141,6 +143,10 @@ public final class VisibilityPolicy {
     public static boolean shouldHide(String filePath) {
         String normalized = normalize(filePath);
         if (normalized == null) return false;
+
+        // MediaStore ownership is more precise than directory inference. This lets an
+        // explicitly selected app stay visible even when it writes into a shared folder.
+        if (OWNER_ALLOWED_PATHS.contains(normalized)) return false;
 
         File f = new File(normalized);
         String dir = normalize(f.getParent());
@@ -214,6 +220,16 @@ public final class VisibilityPolicy {
 
     public static Set<String> passthroughAppsSnapshot() {
         return new HashSet<>(passthroughApps);
+    }
+
+    static boolean isSelectedAppPackage(String packageName) {
+        return packageName != null && passthroughApps.contains(packageName);
+    }
+
+    static void rememberOwnerAllowedPath(String filePath, String ownerPackage) {
+        if (!isSelectedAppPackage(ownerPackage)) return;
+        String normalized = normalize(filePath);
+        if (normalized != null) OWNER_ALLOWED_PATHS.add(normalized);
     }
 
     public static ArrayList<String> trustedSnapshot() {
