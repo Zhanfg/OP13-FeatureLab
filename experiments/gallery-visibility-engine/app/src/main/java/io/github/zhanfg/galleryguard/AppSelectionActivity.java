@@ -29,7 +29,6 @@ import com.google.android.material.textfield.TextInputLayout;
 import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -72,11 +71,8 @@ public final class AppSelectionActivity extends AppCompatActivity
     }
 
     private void buildUi() {
-        int pad = dp(18);
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(pad, pad, pad, dp(8));
 
         TextView title = new TextView(this);
         title.setText("选择应用透传");
@@ -84,7 +80,7 @@ public final class AppSelectionActivity extends AppCompatActivity
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("默认启用常见通讯软件。可搜索并多选任意应用；每次勾选会自动映射它的媒体目录。");
+        subtitle.setText("可搜索并多选任意应用；勾选后自动映射它的媒体目录。");
         subtitle.setPadding(0, dp(4), 0, dp(10));
         root.addView(subtitle);
 
@@ -102,7 +98,7 @@ public final class AppSelectionActivity extends AppCompatActivity
         root.addView(searchBox);
 
         MaterialButton reset = new MaterialButton(this);
-        reset.setText("恢复默认通讯软件");
+        reset.setText("恢复初始勾选");
         reset.setOnClickListener(v -> resetDefaults());
         root.addView(reset);
 
@@ -123,6 +119,7 @@ public final class AppSelectionActivity extends AppCompatActivity
         });
 
         setContentView(root);
+        EdgeToEdgeInsets.apply(this, root, 20, 12, 12);
     }
 
     private void loadApps() {
@@ -154,9 +151,6 @@ public final class AppSelectionActivity extends AppCompatActivity
             ArrayList<AppItem> result = new ArrayList<>(unique.values());
             Collator collator = Collator.getInstance(Locale.getDefault());
             result.sort((a, b) -> {
-                boolean ad = AppMediaRegistry.isDefaultCommunicationPackage(a.packageName);
-                boolean bd = AppMediaRegistry.isDefaultCommunicationPackage(b.packageName);
-                if (ad != bd) return ad ? -1 : 1;
                 int c = collator.compare(a.label, b.label);
                 return c != 0 ? c : a.packageName.compareTo(b.packageName);
             });
@@ -269,7 +263,7 @@ public final class AppSelectionActivity extends AppCompatActivity
             LinearLayout row = new LinearLayout(parent.getContext());
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(4), dp(8), dp(4), dp(8));
+            row.setPadding(0, dp(8), 0, dp(8));
 
             ImageView icon = new ImageView(parent.getContext());
             row.addView(icon, new LinearLayout.LayoutParams(dp(44), dp(44)));
@@ -290,7 +284,13 @@ public final class AppSelectionActivity extends AppCompatActivity
                     0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
             MaterialCheckBox check = new MaterialCheckBox(parent.getContext());
-            row.addView(check);
+            check.setMinWidth(dp(48));
+            check.setMinimumWidth(dp(48));
+            check.setMinHeight(dp(48));
+            check.setMinimumHeight(dp(48));
+            LinearLayout.LayoutParams checkLp =
+                    new LinearLayout.LayoutParams(dp(48), dp(48));
+            row.addView(check, checkLp);
 
             return new AppViewHolder(row, icon, label, pkg, check);
         }
@@ -300,9 +300,7 @@ public final class AppSelectionActivity extends AppCompatActivity
             Set<String> selected = selectedPackages();
 
             h.icon.setImageDrawable(item.icon);
-            h.label.setText(item.label
-                    + (AppMediaRegistry.isDefaultCommunicationPackage(item.packageName)
-                    ? "  ·  默认通讯" : ""));
+            h.label.setText(item.label);
             h.pkg.setText(item.packageName);
 
             h.check.setOnCheckedChangeListener(null);
