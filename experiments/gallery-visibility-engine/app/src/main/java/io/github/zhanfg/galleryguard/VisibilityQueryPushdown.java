@@ -4,19 +4,18 @@ import android.content.ContentResolver;
 import android.os.Bundle;
 
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Set;
 
 import io.github.libxposed.api.XposedInterface;
 
 /**
- * Converts the visibility policy into SQL selection before the provider executes a query.
+ * Converts visibility rules into provider-side SQL selection.
  *
- * This replaces the old hot-path design that iterated every returned Cursor row before UI could
- * render. The provider/SQLite engine now discards disallowed paths directly.
+ * No Cursor rows are walked here. The expensive filtering work is delegated to the provider's
+ * SQLite query, while .nomedia exclusions are supplied by the existing watcher traversal.
  */
 final class VisibilityQueryPushdown {
-    private static volatile Snapshot sSnapshot = Snapshot.disabled(-1L);
+    private static volatile Snapshot sSnapshot = Snapshot.disabled(-1L, -1L);
 
     private VisibilityQueryPushdown() {}
 
@@ -65,50 +64,104 @@ final class VisibilityQueryPushdown {
     }
 
     private static Snapshot current() {
-        long generation = VisibilityPolicy.generation();
+        long policyGeneration = VisibilityPolicy.generation();
+        long nomediaGeneration = NomediaIndex.generation();
+
         Snapshot current = sSnapshot;
-        if (current.generation == generation) return current;
+        if (current.policyGeneration == policyGeneration
+                && current.nomediaGeneration == nomediaGeneration) {
+            return current;
+        }
 
         synchronized (VisibilityQueryPushdown.class) {
             current = sSnapshot;
-            if (current.generation == generation) return current;
-
-            if (!VisibilityPolicy.strictIsolationEnabled()) {
-                current = Snapshot.disabled(generation);
-            } else {
-                current = build(generation, VisibilityPolicy.allowedRootSnapshot());
+            if (current.policyGeneration == policyGeneration
+                    && current.nomediaGeneration == nomediaGeneration) {
+                return current;
             }
+
+            current = build(
+                    policyGeneration,
+                    nomediaGeneration,
+                    VisibilityPolicy.strictIsolationEnabled(),
+                    VisibilityPolicy.allowedRootSnapshot(),
+                    VisibilityPolicy.explicitPassthroughRootSnapshot(),
+                    NomediaIndex.snapshot());
 
             sSnapshot = current;
             return current;
         }
     }
 
-    private static Snapshot build(long generation, Set<String> roots) {
-        if (roots == null || roots.isEmpty()) {
-            return Snapshot.disabled(generation);
+    private static Snapshot build(
+            long policyGeneration,
+            long nomediaGeneration,
+            boolean strictIsolation,
+            Set<String> allowedRoots,
+            Set<String> explicitRoots,
+            Set<String> hiddenDirs) {
+
+        ArrayList<String> args = new ArrayList<>();
+        String allow = strictIsolation
+                ? pathPredicate(allowedRoots, args)
+                : "";
+
+        String explicit = pathPredicate(explicitRoots, args);
+        String hidden = pathPredicate(hiddenDirs, args);
+
+        String selection;
+
+        if (strictIsolation) {
+            if (allow.isEmpty()) {
+                // Fail open rather than returning an unexpectedly empty gallery.
+                return Snapshot.disabled(policyGeneration, nomediaGeneration);
+            }
+
+            if (hidden.isEmpty()) {
+                selection = allow;
+            } else if (explicit.isEmpty()) {
+                selection = "(" + allow + ") AND NOT (" + hidden + ")";
+            } else {
+                // Explicit app/folder passthrough wins over an ancestor .nomedia.
+                selection = "(" + allow + ") AND ((" + explicit + ") OR NOT (" + hidden + "))";
+            }
+        } else {
+            if (hidden.isEmpty()) {
+                return Snapshot.disabled(policyGeneration, nomediaGeneration);
+            }
+            if (explicit.isEmpty()) {
+                selection = "NOT (" + hidden + ")";
+            } else {
+                selection = "(" + explicit + ") OR NOT (" + hidden + ")";
+            }
         }
 
-        StringBuilder selection = new StringBuilder("(");
-        ArrayList<String> args = new ArrayList<>(roots.size());
-
-        boolean first = true;
-        for (String root : roots) {
-            if (root == null || root.isEmpty()) continue;
-            if (!first) selection.append(" OR ");
-            first = false;
-            selection.append("_data LIKE ? ESCAPE '!'");
-            args.add(escapeLike(root) + "/%");
-        }
-
-        if (first) return Snapshot.disabled(generation);
-
-        selection.append(')');
         return new Snapshot(
-                generation,
+                policyGeneration,
+                nomediaGeneration,
                 true,
-                selection.toString(),
+                selection,
                 args.toArray(new String[0]));
+    }
+
+    private static String pathPredicate(Set<String> roots, ArrayList<String> args) {
+        if (roots == null || roots.isEmpty()) return "";
+
+        StringBuilder out = new StringBuilder();
+        boolean first = true;
+
+        for (String root : roots) {
+            String n = VisibilityPolicy.normalize(root);
+            if (n == null || n.isEmpty()) continue;
+
+            if (!first) out.append(" OR ");
+            first = false;
+
+            out.append("_data LIKE ? ESCAPE '!'");
+            args.add(escapeLike(n) + "/%");
+        }
+
+        return first ? "" : out.toString();
     }
 
     private static String escapeLike(String value) {
@@ -135,20 +188,32 @@ final class VisibilityQueryPushdown {
     }
 
     private static final class Snapshot {
-        final long generation;
+        final long policyGeneration;
+        final long nomediaGeneration;
         final boolean enabled;
         final String selection;
         final String[] args;
 
-        Snapshot(long generation, boolean enabled, String selection, String[] args) {
-            this.generation = generation;
+        Snapshot(
+                long policyGeneration,
+                long nomediaGeneration,
+                boolean enabled,
+                String selection,
+                String[] args) {
+            this.policyGeneration = policyGeneration;
+            this.nomediaGeneration = nomediaGeneration;
             this.enabled = enabled;
             this.selection = selection;
             this.args = args;
         }
 
-        static Snapshot disabled(long generation) {
-            return new Snapshot(generation, false, "", new String[0]);
+        static Snapshot disabled(long policyGeneration, long nomediaGeneration) {
+            return new Snapshot(
+                    policyGeneration,
+                    nomediaGeneration,
+                    false,
+                    "",
+                    new String[0]);
         }
     }
 }
