@@ -110,12 +110,23 @@ public class MediaQueryFilter {
      */
     static boolean isGalleryLocalMediaUri(Uri uri) {
         if (uri == null) return false;
-        String s = uri.toString();
-        // authority: com.oplus.gallery.database.provider.gallery
-        return s.startsWith("content://com.oplus.gallery.database.provider.gallery/")
-            && (s.contains("/local_media_internal")
-                || s.contains("/local_media")
-                || s.contains("/gallery_media"));
+
+        // ColorOS 17 compatibility: do not hard-code one provider authority.
+        // This hook only runs inside the Gallery process, so matching a Gallery-ish authority
+        // plus known local media table path is substantially safer than binding to one class name.
+        String authority = uri.getAuthority();
+        String path = uri.getPath();
+        if (authority == null || path == null) return false;
+
+        String a = authority.toLowerCase(java.util.Locale.ROOT);
+        String p = path.toLowerCase(java.util.Locale.ROOT);
+
+        boolean galleryAuthority = a.contains("gallery") || a.contains("photos");
+        boolean localMediaPath = p.contains("/local_media_internal")
+                || p.contains("/local_media")
+                || p.contains("/gallery_media");
+
+        return galleryAuthority && localMediaPath;
     }
 
     /** projection 是否包含指定列（大小写不敏感） */
@@ -802,9 +813,11 @@ public class MediaQueryFilter {
             Object o0 = chain.getArg(0);
             if (!(o0 instanceof Uri)) return chain.proceed();
             Uri uri = (Uri) o0;
-            if (!isMediaUri(uri)) {
-                // v1.3 诊断：content:// 但非 media（相册自建 provider / 其它）→ 节流打探针，
-                // 观察首帧是否读相册自建库（gallery.db local_media 等，旧版对此完全盲区）。
+            boolean mediaStoreQuery = isMediaUri(uri);
+            boolean galleryLocalQuery = isGalleryLocalMediaUri(uri);
+
+            if (!mediaStoreQuery && !galleryLocalQuery) {
+                // 非 MediaStore / 非相册 local_media 查询：仅 debug 探针，功能上完全放行。
                 if (uri.toString().startsWith("content://")) {
                     // #ifdef DEBUG
                     if (BuildConfig.DEBUG) {
@@ -819,7 +832,7 @@ public class MediaQueryFilter {
                     }
                     // #endif
                 }
-                return chain.proceed();   // 非媒体库查询，原样放行
+                return chain.proceed();
             }
 
             sQueryCount++;
@@ -843,12 +856,19 @@ public class MediaQueryFilter {
             if (raw == null) return null;
 
             int mode;
-            if (hasData) {
+            boolean feedIdIndex = mediaStoreQuery;
+
+            if (galleryLocalQuery) {
+                // ColorOS 17 resilient fallback: filter Gallery local_media at ContentResolver
+                // boundary, even when GalleryProvider class/package names change.
+                if (!hasData) return raw;
+                mode = FilteringCursor.MODE_DATA;
+                feedIdIndex = false; // Gallery local _id is NOT MediaStore._id.
+            } else if (hasData) {
                 mode = FilteringCursor.MODE_DATA;
             } else if (hasId && hasHiddenIdIndex()) {
-                mode = FilteringCursor.MODE_ID;   // 首帧轻量查询：按 _id 索引过滤
+                mode = FilteringCursor.MODE_ID;
             } else {
-                // 无 _data 也无 _id（或索引尚未建立）→ 无法按行过滤，原样放行
                 if (BuildConfig.DEBUG) {
                     // #ifdef DEBUG
                     Debug.d(TAG, "QUERY-FILTER: uri=" + uri + " 无 _data/_id(或索引空) → 放行");
@@ -859,7 +879,7 @@ public class MediaQueryFilter {
 
             long t0 = System.currentTimeMillis();
             int before = raw.getCount();
-            FilteringCursor filtered = new FilteringCursor(raw, mode);
+            FilteringCursor filtered = new FilteringCursor(raw, mode, feedIdIndex);
             int after = filtered.getCount();
             long cost = System.currentTimeMillis() - t0;
 
