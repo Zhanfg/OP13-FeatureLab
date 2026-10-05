@@ -636,8 +636,12 @@ public class MediaQueryFilter {
                     // 深目录树一次性全建 watch 可能太多；限制单根深度避免失控
                     if (list.size() >= 600) { skipped++; break; }
                     try {
-                        // v1.3.0: 捕获本 watch 目录绝对路径（.nomedia 事件精确删行用）
+                        // The watcher traversal doubles as the initial .nomedia index build.
                         final String watchDirAbs = dir.getAbsolutePath();
+                        if (new File(dir, ".nomedia").isFile()) {
+                            NomediaIndex.add(watchDirAbs);
+                        }
+
                         android.os.FileObserver w = new android.os.FileObserver(dir.getAbsolutePath(), mask) {
                             @Override public void onEvent(int event, String path) {
                                 if (path != null
@@ -654,8 +658,10 @@ public class MediaQueryFilter {
                                     boolean removed = (event & (android.os.FileObserver.DELETE
                                             | android.os.FileObserver.MOVED_FROM)) != 0;
                                     if (created) {
+                                        NomediaIndex.add(watchDirAbs);
                                         deleteLocalMediaRowsUnder(sAppContext, watchDirAbs);
                                     } else if (removed) {
+                                        NomediaIndex.remove(watchDirAbs);
                                         rescanMediaAfterNomediaRemoved(sAppContext, watchDirAbs);
                                     }
                                     markGallerySyncDirty();
