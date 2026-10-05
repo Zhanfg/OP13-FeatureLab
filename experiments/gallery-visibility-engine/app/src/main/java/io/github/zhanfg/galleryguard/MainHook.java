@@ -138,18 +138,32 @@ public class MainHook extends XposedModule implements HookLogger {
         sHookDetail = new StringBuilder();
         sHookOk = sHookFail = 0;
 
-        // ① 主入口：MediaDBSyncDM#j() —— startNomediaCheckTask（不启动 NomediaScanner）
-        hookNoArgVoid(cl,
-            "com.oplus.gallery.framework.abilities.mediadbsync.MediaDBSyncDM",
-            "j", "entry(j=startNomediaCheckTask)", new BlockHooker("MediaDBSyncDM.j"));
+        /*
+         * ColorOS 17 (Gallery 17.10.6) moved the nomedia chain:
+         *   MediaDBSyncDM.i() -> uks.run() -> wks.a(String,String,HashMap,HashMap)
+         * ColorOS 16 used:
+         *   MediaDBSyncDM.j() -> gyq.run() -> iyq.a(...)
+         *
+         * Try structural/version candidates in order and hook only the first valid one in each
+         * role. This keeps one APK compatible with both generations without relying on OS version.
+         */
+        hookFirstNoArgVoid(cl,
+                new String[][] {
+                        {"com.oplus.gallery.framework.abilities.mediadbsync.MediaDBSyncDM", "i",
+                                "ColorOS17 entry(i=startNomediaCheckTask)"},
+                        {"com.oplus.gallery.framework.abilities.mediadbsync.MediaDBSyncDM", "j",
+                                "ColorOS16 entry(j=startNomediaCheckTask)"}
+                },
+                "nomedia-entry");
 
-        // ② 兜底：NomediaScanner 主任务 Runnable#run()（即使被其它入口触发也空转）
-        hookNoArgVoid(cl,
-            "com.oplus.aiunit.vision.gyq",
-            "run", "task(gyq.run)", new BlockHooker("gyq.run"));
+        hookFirstNoArgVoid(cl,
+                new String[][] {
+                        {"com.oplus.aiunit.vision.uks", "run", "ColorOS17 NomediaScanner task"},
+                        {"com.oplus.aiunit.vision.gyq", "run", "ColorOS16 NomediaScanner task"}
+                },
+                "nomedia-task");
 
-        // ③ 兜底：NomediaScanner 判定 iyq#a(String,String,HashMap,HashMap) —— 恒 false，
-        //        让"目录含 .nomedia"判定永不成立 → delete/scan 集合为空 → .nomedia 永不被改名/删除
+        // ③ 兜底：判定函数恒 false，确保即便其它入口启动 scanner，也不会改名/删除 .nomedia。
         hookNomediaCheck(cl);
 
         // ④ 查询层过滤（v1）：hook ContentResolver.query —— 相册读媒体库时剔除 .nomedia 目录旧记录
@@ -180,38 +194,59 @@ public class MainHook extends XposedModule implements HookLogger {
 
     // ===== hook 辅助 =====
 
-    /** hook 无参 void 方法：getDeclaredMethod(cls, method) → 拦截直接短路（不 proceed） */
-    private void hookNoArgVoid(ClassLoader cl, String clsName, String methodName,
-                               String desc, XposedInterface.Hooker hooker) {
-        try {
-            Class<?> cls = cl.loadClass(clsName);
-            Method m = cls.getDeclaredMethod(methodName);
-            hook(m).intercept(hooker);
-            sHookOk++;
-            sHookDetail.append("[OK] ").append(clsName).append("#").append(methodName)
-                .append(" (").append(desc).append(")\n");
-        } catch (Throwable e) {
-            sHookFail++;
-            sHookDetail.append("[FAIL] ").append(clsName).append("#").append(methodName)
-                .append(" (").append(desc).append("): ").append(e).append("\n");
-            Debug.d(TAG, "hook fail: " + clsName + "#" + methodName, e);
+    /** Hook the first existing no-arg void candidate for one semantic role. */
+    private void hookFirstNoArgVoid(ClassLoader cl, String[][] candidates, String role) {
+        Throwable last = null;
+        for (String[] candidate : candidates) {
+            String clsName = candidate[0];
+            String methodName = candidate[1];
+            String desc = candidate[2];
+            try {
+                Class<?> cls = cl.loadClass(clsName);
+                Method m = cls.getDeclaredMethod(methodName);
+                if (m.getReturnType() != void.class || m.getParameterCount() != 0) {
+                    continue;
+                }
+                hook(m).intercept(new BlockHooker(cls.getSimpleName() + "." + methodName));
+                sHookOk++;
+                sHookDetail.append("[OK] ").append(role).append(" -> ")
+                        .append(clsName).append("#").append(methodName)
+                        .append(" (").append(desc).append(")\n");
+                return;
+            } catch (Throwable e) {
+                last = e;
+            }
         }
+        sHookFail++;
+        sHookDetail.append("[FAIL] ").append(role).append(": no compatible candidate")
+                .append(last != null ? " / " + last : "").append("\n");
     }
 
-    /** hook NomediaScanner 判定方法 a：签名 a(String,String,HashMap,HashMap)Z，恒返 false */
+    /** ColorOS 17=wks.a(...), ColorOS 16=iyq.a(...). Same structural signature. */
     private void hookNomediaCheck(ClassLoader cl) {
-        try {
-            Class<?> cls = cl.loadClass("com.oplus.aiunit.vision.iyq");
-            Method m = cls.getDeclaredMethod("a", String.class, String.class,
-                HashMap.class, HashMap.class);
-            hook(m).intercept(new NomediaCheckHooker());
-            sHookOk++;
-            sHookDetail.append("[OK] com.oplus.aiunit.vision.iyq#a(String,String,HashMap,HashMap) (nomediaCheck)\n");
-        } catch (Throwable e) {
-            sHookFail++;
-            sHookDetail.append("[FAIL] com.oplus.aiunit.vision.iyq#a(...): ").append(e).append("\n");
-            Debug.d(TAG, "hook fail: iyq.a", e);
+        String[] classes = {
+                "com.oplus.aiunit.vision.wks",
+                "com.oplus.aiunit.vision.iyq"
+        };
+        Throwable last = null;
+        for (String clsName : classes) {
+            try {
+                Class<?> cls = cl.loadClass(clsName);
+                Method m = cls.getDeclaredMethod("a", String.class, String.class,
+                        HashMap.class, HashMap.class);
+                if (m.getReturnType() != boolean.class) continue;
+                hook(m).intercept(new NomediaCheckHooker());
+                sHookOk++;
+                sHookDetail.append("[OK] nomedia-check -> ").append(clsName)
+                        .append("#a(String,String,HashMap,HashMap)Z\n");
+                return;
+            } catch (Throwable e) {
+                last = e;
+            }
         }
+        sHookFail++;
+        sHookDetail.append("[FAIL] nomedia-check: no compatible candidate")
+                .append(last != null ? " / " + last : "").append("\n");
     }
 
     /**
