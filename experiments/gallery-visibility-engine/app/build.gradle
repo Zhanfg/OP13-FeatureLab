@@ -10,8 +10,8 @@ android {
         applicationId "io.github.zhanfg.galleryguard"
         minSdk 26
         targetSdk 37
-        versionCode 15102
-        versionName "1.5.1-alpha2"
+        versionCode 15201
+        versionName "1.5.2-alpha1"
     }
 
     buildTypes {
