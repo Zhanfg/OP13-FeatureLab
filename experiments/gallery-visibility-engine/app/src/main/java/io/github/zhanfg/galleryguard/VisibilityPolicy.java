@@ -214,6 +214,41 @@ public final class VisibilityPolicy {
         return p;
     }
 
+    public static boolean strictIsolationEnabled() {
+        return strictIsolation;
+    }
+
+    /**
+     * Snapshot of every directory that is allowed while strict isolation is enabled.
+     * Returned paths are normalized and compacted so child roots covered by a parent root
+     * do not generate redundant SQL OR terms.
+     */
+    public static Set<String> allowedRootSnapshot() {
+        ArrayList<String> roots = new ArrayList<>();
+        Collections.addAll(roots, TRUSTED_PREFIXES);
+        roots.addAll(passthroughDirs);
+        roots.addAll(appPassthroughRoots);
+
+        roots.sort((a, b) -> {
+            int d = Integer.compare(a.length(), b.length());
+            return d != 0 ? d : a.compareTo(b);
+        });
+
+        java.util.LinkedHashSet<String> compact = new java.util.LinkedHashSet<>();
+        outer:
+        for (String raw : roots) {
+            String n = normalize(raw);
+            if (n == null) continue;
+            for (String parent : compact) {
+                if (n.equals(parent) || n.startsWith(parent + "/")) {
+                    continue outer;
+                }
+            }
+            compact.add(n);
+        }
+        return compact;
+    }
+
     public static Set<String> passthroughSnapshot() {
         return new HashSet<>(passthroughDirs);
     }
