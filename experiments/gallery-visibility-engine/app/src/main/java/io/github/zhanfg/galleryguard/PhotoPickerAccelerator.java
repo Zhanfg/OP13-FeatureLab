@@ -4,6 +4,7 @@ import android.content.ContentResolver;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 
@@ -84,6 +85,13 @@ final class PhotoPickerAccelerator {
 
     static void install(MainHook owner, SharedPreferences remotePrefs) {
         prefs = remotePrefs;
+
+        // Android 17's standalone Photo Picker already owns its paging/invalidation pipeline.
+        // Do not add query/call hooks here: stability and freshness take priority.
+        if (Build.VERSION.SDK_INT >= 37) {
+            MainHook.info(TAG, "Android 17+ native Photo Picker path: accelerator hooks disabled");
+            return;
+        }
 
         int ok = 0;
         int fail = 0;
