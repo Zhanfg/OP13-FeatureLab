@@ -103,9 +103,17 @@ public class MediaQueryFilter {
 
     /** 是否媒体库查询（只过滤 content://media/...，其它放行） */
     static boolean isMediaUri(Uri uri) {
-        if (uri == null) return false;
-        String s = uri.toString();
-        return s.startsWith("content://media/");
+        if (uri == null || !"media".equals(uri.getAuthority())) return false;
+        String path = uri.getPath();
+        if (path == null) return false;
+        String p = path.toLowerCase(java.util.Locale.ROOT);
+
+        // Only collections that actually expose MediaStore._data. Do not touch PhotoPicker,
+        // cloud-media or other internal MediaProvider tables.
+        return p.contains("/images/media")
+                || p.contains("/video/media")
+                || p.endsWith("/file")
+                || p.contains("/file/");
     }
 
     /**
