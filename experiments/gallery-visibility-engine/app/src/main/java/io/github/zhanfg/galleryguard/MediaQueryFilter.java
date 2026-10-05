@@ -895,6 +895,14 @@ public class MediaQueryFilter {
 
             // Critical fast path: filtering happens in provider SQL before a Cursor exists.
             // No getCount(), no full Cursor iteration, no frozen visible-position table.
-            return proceedWithVisibilityPushdown(chain);
+            long t0 = android.os.SystemClock.elapsedRealtime();
+            Object result = proceedWithVisibilityPushdown(chain);
+            long cost = android.os.SystemClock.elapsedRealtime() - t0;
+            if (BuildConfig.DEBUG && cost >= 120L) {
+                Debug.d(TAG, "QUERY-PUSHDOWN[SLOW] uri=" + uri
+                        + " cost=" + cost + "ms"
+                        + " generation=" + VisibilityPolicy.generation());
+            }
+            return result;
         }
     }}
