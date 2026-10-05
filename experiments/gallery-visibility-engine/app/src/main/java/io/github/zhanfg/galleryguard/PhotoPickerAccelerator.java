@@ -72,11 +72,13 @@ final class PhotoPickerAccelerator {
     static boolean isPickerPackage(String pkg) {
         return "com.android.providers.media.module".equals(pkg)
                 || "com.google.android.providers.media.module".equals(pkg)
+                || "com.android.photopicker".equals(pkg)
                 || "com.google.android.photopicker".equals(pkg);
     }
 
     static boolean shouldInstallInProcess(String pkg, String processName) {
-        if ("com.google.android.photopicker".equals(pkg)) return true;
+        if ("com.android.photopicker".equals(pkg)
+                || "com.google.android.photopicker".equals(pkg)) return true;
         return processName != null && processName.endsWith(":PhotoPicker");
     }
 
