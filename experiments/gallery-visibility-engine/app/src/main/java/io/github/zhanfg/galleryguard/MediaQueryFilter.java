@@ -90,6 +90,13 @@ public class MediaQueryFilter {
     /** 预索引/purge 线程标记：我们自己发起的查询要直接 proceed，避免递归过滤（包可见，MainHook hooker 用） */
     static final ThreadLocal<Boolean> sIndexing = ThreadLocal.withInitial(() -> Boolean.FALSE);
 
+    /**
+     * Prevents duplicate SQL injection when ContentResolver.query() calls the in-process
+     * GalleryProvider.query() on the same thread.
+     */
+    static final ThreadLocal<Boolean> sPushdownActive =
+            ThreadLocal.withInitial(() -> Boolean.FALSE);
+
     private MediaQueryFilter() {}
 
     // ===== uri / 列判断 =====
@@ -464,7 +471,9 @@ public class MediaQueryFilter {
      * 真正扫描放后台，避免阻塞 Binder / UI。
      */
     public static void onVisibilityPolicyChanged() {
-        // VisibilityPolicy.reload() 已经 invalidate，这里只负责把昂贵工作合并执行。
+        // SQL predicate snapshots are generation-based and rebuild lazily on the next query.
+        // Do not scan MediaStore or local_media here; those full scans were the main source of
+        // UI stalls on large ColorOS 17 libraries.
         final Context ctx = sAppContext;
         markGallerySyncDirty();
         if (ctx == null) return;
@@ -472,18 +481,11 @@ public class MediaQueryFilter {
         final long serial = sPolicyRefreshSerial.incrementAndGet();
         Thread t = new Thread(() -> {
             try {
-                Thread.sleep(450);
+                Thread.sleep(300);
             } catch (InterruptedException e) {
                 return;
             }
-
-            // 450ms 内又有新的多选操作：旧任务直接取消，最后一次统一处理。
             if (serial != sPolicyRefreshSerial.get()) return;
-
-            sHiddenIds.clear();
-            sIndexBuilt = false;
-            buildHiddenIdIndex(ctx);
-            purgeLocalMediaForHiddenDirs(ctx);
             driveGallerySyncIfNeeded();
         }, "gallery-policy-refresh");
         t.setDaemon(true);
@@ -832,119 +834,59 @@ public class MediaQueryFilter {
      *   - 其余 → 原样放行（无可判列）
      * 功能（过滤）release/debug 都生效；路径/统计日志仅 debug（if BuildConfig.DEBUG）。
      */
-    public static class QueryHooker implements XposedInterface.Hooker {
+    static Object proceedWithVisibilityPushdown(
+            XposedInterface.Chain chain) throws Throwable {
+        if (Boolean.TRUE.equals(sPushdownActive.get())) {
+            return chain.proceed();
+        }
 
+        Object[] modified = VisibilityQueryPushdown.inject(chain);
+        if (modified == null) {
+            return chain.proceed();
+        }
+
+        sPushdownActive.set(Boolean.TRUE);
+        try {
+            return chain.proceed(modified);
+        } finally {
+            sPushdownActive.remove();
+        }
+    }
+
+    public static class QueryHooker implements XposedInterface.Hooker {
         private static int sQueryCount;
-        private static int sDataFiltered;
-        private static int sIdFiltered;
-        private static int sOtherUriCount;   // v1.3 诊断：非 media 的 content:// 查询计数
+        private static int sOtherUriCount;
 
         @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            // 预索引线程自己的查询：直接放行，避免递归
             if (Boolean.TRUE.equals(sIndexing.get())) return chain.proceed();
 
             Object o0 = chain.getArg(0);
             if (!(o0 instanceof Uri)) return chain.proceed();
+
             Uri uri = (Uri) o0;
             boolean mediaStoreQuery = isMediaUri(uri);
             boolean galleryLocalQuery = isGalleryLocalMediaUri(uri);
 
             if (!mediaStoreQuery && !galleryLocalQuery) {
-                // 非 MediaStore / 非相册 local_media 查询：仅 debug 探针，功能上完全放行。
-                if (uri.toString().startsWith("content://")) {
-                    // #ifdef DEBUG
-                    if (BuildConfig.DEBUG) {
-                        sOtherUriCount++;
-                        if (sOtherUriCount <= 60 || sOtherUriCount % 200 == 0) {
-                            Object o1 = chain.getArg(1);
-                            String[] projection = (o1 instanceof String[]) ? (String[]) o1 : null;
-                            Debug.d(TAG, "QUERY-FILTER[OTHER-URI] #" + sOtherUriCount
-                                + " uri=" + uri + " proj=" + shortProjection(projection)
-                                + " sel=" + chain.getArg(2));
-                        }
+                if (BuildConfig.DEBUG && uri.toString().startsWith("content://")) {
+                    sOtherUriCount++;
+                    if (sOtherUriCount <= 20 || sOtherUriCount % 250 == 0) {
+                        Debug.d(TAG, "QUERY-PUSHDOWN[OTHER] #" + sOtherUriCount
+                                + " uri=" + uri);
                     }
-                    // #endif
                 }
                 return chain.proceed();
             }
 
             sQueryCount++;
-            Object o1 = chain.getArg(1);
-            String[] projection = (o1 instanceof String[]) ? (String[]) o1 : null;
-            boolean hasData = hasDataColumn(projection);
-            boolean hasId = hasIdColumn(projection);
-
-            if (BuildConfig.DEBUG) {
-                // #ifdef DEBUG
-                if (sQueryCount <= 40 || sQueryCount % 100 == 0) {
-                    Debug.d(TAG, "QUERY-FILTER[probe] #" + sQueryCount + " uri=" + uri
-                        + " 带_data=" + hasData + " 带_id=" + hasId
-                        + " proj=" + shortProjection(projection)
-                        + " sel=" + chain.getArg(2));
-                }
-                // #endif
+            if (BuildConfig.DEBUG && (sQueryCount <= 20 || sQueryCount % 100 == 0)) {
+                Debug.d(TAG, "QUERY-PUSHDOWN #" + sQueryCount
+                        + " uri=" + uri
+                        + " generation=" + VisibilityPolicy.generation());
             }
 
-            Cursor raw = (Cursor) chain.proceed();
-            if (raw == null) return null;
-
-            int mode;
-            boolean feedIdIndex = mediaStoreQuery;
-
-            if (galleryLocalQuery) {
-                // ColorOS 17 resilient fallback: filter Gallery local_media at ContentResolver
-                // boundary, even when GalleryProvider class/package names change.
-                if (!hasData) return raw;
-                mode = FilteringCursor.MODE_DATA;
-                feedIdIndex = false; // Gallery local _id is NOT MediaStore._id.
-            } else if (hasData) {
-                mode = FilteringCursor.MODE_DATA;
-            } else if (hasId && hasHiddenIdIndex()) {
-                mode = FilteringCursor.MODE_ID;
-            } else {
-                if (BuildConfig.DEBUG) {
-                    // #ifdef DEBUG
-                    Debug.d(TAG, "QUERY-FILTER: uri=" + uri + " 无 _data/_id(或索引空) → 放行");
-                    // #endif
-                }
-                return raw;
-            }
-
-            long t0 = System.currentTimeMillis();
-            int before = raw.getCount();
-            FilteringCursor filtered = new FilteringCursor(raw, mode, feedIdIndex);
-            int after = filtered.getCount();
-            long cost = System.currentTimeMillis() - t0;
-
-            if (filtered.hiddenCount() > 0) {
-                if (mode == FilteringCursor.MODE_DATA) sDataFiltered++; else sIdFiltered++;
-                // #ifdef DEBUG
-                if (BuildConfig.DEBUG) {
-                    Debug.d(TAG, (mode == FilteringCursor.MODE_DATA ? "QUERY-FILTER[生效]" : "QUERY-FILTER[ID生效]")
-                        + " uri=" + uri + " 行数 " + before + "→" + after
-                        + " 隐藏 " + filtered.hiddenCount() + " 例: " + filtered.hiddenSample()
-                        + " (" + cost + "ms)");
-                }
-                // #endif
-            } else if (BuildConfig.DEBUG) {
-                // #ifdef DEBUG
-                Debug.d(TAG, (mode == FilteringCursor.MODE_DATA ? "QUERY-FILTER[无隐藏]" : "QUERY-FILTER[ID无隐藏]")
-                    + " uri=" + uri + " 行数=" + before + " (" + cost + "ms)");
-                // #endif
-            }
-            return filtered;
+            // Critical fast path: filtering happens in provider SQL before a Cursor exists.
+            // No getCount(), no full Cursor iteration, no frozen visible-position table.
+            return proceedWithVisibilityPushdown(chain);
         }
-
-        private static String shortProjection(String[] proj) {
-            if (proj == null) return "null";
-            StringBuilder sb = new StringBuilder("[");
-            int max = Math.min(proj.length, 8);
-            for (int i = 0; i < max; i++) {
-                if (i > 0) sb.append(",");
-                sb.append(proj[i]);
-            }
-            if (proj.length > max) sb.append(",...").append(proj.length);
-            return sb.append("]").toString();
-        }
-    }
-}
+    }}
