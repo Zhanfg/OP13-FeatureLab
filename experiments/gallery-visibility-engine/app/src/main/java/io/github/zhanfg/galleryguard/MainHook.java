@@ -318,31 +318,42 @@ public class MainHook extends XposedModule implements HookLogger {
      *           其余 gallery 查询 → 探针观察不过滤。三个标准重载都尝试。
      */
     private void hookGalleryProviderQuery(ClassLoader cl) {
-        String clsName = "com.oplus.gallery.foundation.database.provider.GalleryProvider";
-        hookQueryProbe(cl, clsName, "query",
-            new Class<?>[] { Uri.class, String[].class, String.class, String[].class, String.class },
-            "GalleryProvider#query(Uri,String[],String,String[],String)");
-        hookQueryProbe(cl, clsName, "query",
-            new Class<?>[] { Uri.class, String[].class, String.class, String[].class,
-                String.class, CancellationSignal.class },
-            "GalleryProvider#query(Uri,String[],String,String[],String,CancellationSignal)");
-        hookQueryProbe(cl, clsName, "query",
-            new Class<?>[] { Uri.class, String[].class, Bundle.class, CancellationSignal.class },
-            "GalleryProvider#query(Uri,String[],Bundle,CancellationSignal)");
-    }
-
-    /** 通用 query 探针/过滤注册：成功记 OK / 失败记 FAIL */
-    private void hookQueryProbe(ClassLoader cl, String clsName, String methodName,
-                                Class<?>[] paramTypes, String desc) {
+        final String clsName = "com.oplus.gallery.foundation.database.provider.GalleryProvider";
         try {
             Class<?> cls = cl.loadClass(clsName);
-            Method m = cls.getDeclaredMethod(methodName, paramTypes);
-            hook(m).intercept(new GalleryQueryHooker(desc));
-            sHookOk++;
-            sHookDetail.append("[OK] ").append(desc).append(" (v1.4 filter+probe)\n");
+            int matched = 0;
+
+            // ColorOS 16 exposed three query overloads; ColorOS 17.10.6 exposes two.
+            // Match by semantic shape instead of an exact overload list.
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!"query".equals(m.getName())) continue;
+                if (!android.database.Cursor.class.isAssignableFrom(m.getReturnType())) continue;
+
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length < 2
+                        || p[0] != android.net.Uri.class
+                        || p[1] != String[].class) {
+                    continue;
+                }
+
+                hook(m).intercept(new GalleryQueryHooker(
+                        "GalleryProvider#" + m.getName() + "/" + p.length));
+                matched++;
+            }
+
+            if (matched > 0) {
+                sHookOk++;
+                sHookDetail.append("[OK] GalleryProvider query family -> ")
+                        .append(matched).append(" overload(s)\n");
+            } else {
+                sHookFail++;
+                sHookDetail.append("[FAIL] GalleryProvider query family: no compatible overload\n");
+            }
         } catch (Throwable e) {
-            sHookFail++;
-            sHookDetail.append("[FAIL] ").append(desc).append(" (v1.4 filter+probe): ").append(e).append("\n");
+            // ContentResolver URI-level filtering is the mandatory fallback on ColorOS 17,
+            // so a renamed provider class no longer makes the feature unusable.
+            sHookDetail.append("[OPTIONAL] GalleryProvider class hook unavailable: ")
+                    .append(e).append(" (URI fallback active)\n");
         }
     }
 
