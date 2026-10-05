@@ -4,6 +4,7 @@ import android.content.ContentResolver;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 
@@ -84,6 +85,13 @@ final class PhotoPickerAccelerator {
 
     static void install(MainHook owner, SharedPreferences remotePrefs) {
         prefs = remotePrefs;
+
+        // Android 17 Photo Picker already has native paging/prefetch in its own app process.
+        // Extra query prefetch competes for MediaProvider I/O and measurably hurts first paint.
+        if (Build.VERSION.SDK_INT >= 37) {
+            MainHook.info(TAG, "Android 17+ native fast path: no extra Picker hooks installed");
+            return;
+        }
 
         int ok = 0;
         int fail = 0;
