@@ -88,7 +88,7 @@ public final class SettingsActivity extends AppCompatActivity
         root.addView(pickerAccelSwitch);
 
         TextView pickerHint = new TextView(this);
-        pickerHint.setText("默认开启安全加速：保留系统实时刷新，只在后台预取下一页，不缓存当前结果、不吞刷新事件。");
+        pickerHint.setText("Android 17 使用系统原生媒体选择器路径；模块不再额外缓存、预取或拦截刷新。");
         pickerHint.setPadding(0, 0, 0, dp(12));
         root.addView(pickerHint);
 
