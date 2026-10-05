@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - exp/gallery-visibility-engine-v1.5.1-coloros17
+      - exp/gallery-visibility-engine-v1.5.2-fastpath
     paths:
       - "experiments/gallery-visibility-engine/**"
       - ".github/workflows/gallery-visibility-engine.yml"
@@ -41,7 +41,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GalleryVisibilityEngine-1.5.1-alpha2
+          name: GalleryVisibilityEngine-1.5.2-alpha1
           path: experiments/gallery-visibility-engine/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
