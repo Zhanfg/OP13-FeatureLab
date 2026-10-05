@@ -392,37 +392,70 @@ public class MediaQueryFilter {
     private static void driveGalleryMediaSync() {
         ClassLoader cl = sAppClassLoader;
         if (cl == null) return;
-        try {
-            Class<?> looCls = Class.forName("com.oplus.aiunit.vision.loo", false, cl);
-            // 单例 getter：loo.f() 双检锁返回 MediaSyncManager 实例
-            java.lang.reflect.Method getter = looCls.getDeclaredMethod("f");
-            Object inst = getter.invoke(null);
-            if (inst == null) return;
-            // 静态入口：loo.a(loo, boolean, Uri) —— 遍历方法找精确签名（防重载混淆）
-            java.lang.reflect.Method onChange = null;
-            for (java.lang.reflect.Method m : looCls.getDeclaredMethods()) {
-                if ("a".equals(m.getName())
-                        && m.getParameterCount() == 3
-                        && m.getParameterTypes()[0] == looCls
-                        && m.getParameterTypes()[1] == boolean.class
-                        && m.getParameterTypes()[2] == android.net.Uri.class) {
-                    onChange = m;
-                    break;
+
+        // ColorOS 17 / Gallery 17.10.6: fgq is the MediaSyncManager implementation.
+        // ColorOS 16: loo served the same role. Both expose:
+        //   static f() -> singleton
+        //   static a(Self, boolean, Uri) -> onMediaChange
+        final String[] candidates = {
+                "com.oplus.aiunit.vision.fgq",
+                "com.oplus.aiunit.vision.loo"
+        };
+
+        Throwable last = null;
+
+        for (String className : candidates) {
+            try {
+                Class<?> syncCls = Class.forName(className, false, cl);
+
+                java.lang.reflect.Method getter = null;
+                for (java.lang.reflect.Method m : syncCls.getDeclaredMethods()) {
+                    if ("f".equals(m.getName())
+                            && m.getParameterCount() == 0
+                            && m.getReturnType() == syncCls) {
+                        getter = m;
+                        break;
+                    }
                 }
+                if (getter == null) continue;
+
+                getter.setAccessible(true);
+                Object inst = getter.invoke(null);
+                if (inst == null) continue;
+
+                java.lang.reflect.Method onChange = null;
+                for (java.lang.reflect.Method m : syncCls.getDeclaredMethods()) {
+                    Class<?>[] p = m.getParameterTypes();
+                    if ("a".equals(m.getName())
+                            && p.length == 3
+                            && p[0] == syncCls
+                            && p[1] == boolean.class
+                            && p[2] == android.net.Uri.class
+                            && m.getReturnType() == void.class) {
+                        onChange = m;
+                        break;
+                    }
+                }
+                if (onChange == null) continue;
+
+                onChange.setAccessible(true);
+                onChange.invoke(null, inst, Boolean.FALSE,
+                        MediaStore.Images.Media.getContentUri("external"));
+                onChange.invoke(null, inst, Boolean.FALSE,
+                        MediaStore.Video.Media.getContentUri("external"));
+
+                if (BuildConfig.DEBUG) {
+                    Debug.d(TAG, "SYNC-DRIVE: matched " + className);
+                }
+                return;
+            } catch (Throwable t) {
+                last = t;
             }
-            if (onChange == null) return;
-            onChange.setAccessible(true);
-            // images + video 两个根 uri 都驱动（UriMatcher 白名单 code 1/6 受理）
-            onChange.invoke(null, inst, Boolean.FALSE,
-                    MediaStore.Images.Media.getContentUri("external"));
-            onChange.invoke(null, inst, Boolean.FALSE,
-                    MediaStore.Video.Media.getContentUri("external"));
-        } catch (Throwable t) {
-            // #ifdef DEBUG
-            if (BuildConfig.DEBUG) {
-                Debug.d(TAG, "SYNC-DRIVE 反射驱动失败: " + t);
-            }
-            // #endif
+        }
+
+        if (BuildConfig.DEBUG) {
+            Debug.d(TAG, "SYNC-DRIVE: no compatible MediaSyncManager"
+                    + (last != null ? " / " + last : ""));
         }
     }
 
