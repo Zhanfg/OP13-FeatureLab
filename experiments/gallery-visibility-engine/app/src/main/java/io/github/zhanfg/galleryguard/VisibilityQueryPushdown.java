@@ -102,12 +102,17 @@ final class VisibilityQueryPushdown {
             Set<String> hiddenDirs) {
 
         ArrayList<String> args = new ArrayList<>();
+        Set<String> compactAllowed = compactRoots(allowedRoots);
+        Set<String> compactExplicit = compactRoots(explicitRoots);
+        Set<String> compactHidden = compactRelevantHidden(
+                hiddenDirs, compactAllowed, strictIsolation);
+
         String allow = strictIsolation
-                ? pathPredicate(allowedRoots, args)
+                ? pathPredicate(compactAllowed, args)
                 : "";
 
-        String explicit = pathPredicate(explicitRoots, args);
-        String hidden = pathPredicate(hiddenDirs, args);
+        String explicit = pathPredicate(compactExplicit, args);
+        String hidden = pathPredicate(compactHidden, args);
 
         String selection;
 
@@ -142,6 +147,61 @@ final class VisibilityQueryPushdown {
                 true,
                 selection,
                 args.toArray(new String[0]));
+    }
+
+    private static Set<String> compactRelevantHidden(
+            Set<String> hiddenDirs,
+            Set<String> allowedRoots,
+            boolean strictIsolation) {
+
+        Set<String> compact = compactRoots(hiddenDirs);
+        if (!strictIsolation || compact.isEmpty()) return compact;
+
+        java.util.LinkedHashSet<String> relevant = new java.util.LinkedHashSet<>();
+        for (String hidden : compact) {
+            for (String allowed : allowedRoots) {
+                if (intersectsByPrefix(hidden, allowed)) {
+                    relevant.add(hidden);
+                    break;
+                }
+            }
+        }
+        return relevant;
+    }
+
+    private static Set<String> compactRoots(Set<String> roots) {
+        if (roots == null || roots.isEmpty()) {
+            return java.util.Collections.emptySet();
+        }
+
+        ArrayList<String> sorted = new ArrayList<>();
+        for (String root : roots) {
+            String n = VisibilityPolicy.normalize(root);
+            if (n != null && !n.isEmpty()) sorted.add(n);
+        }
+
+        sorted.sort((a, b) -> {
+            int d = Integer.compare(a.length(), b.length());
+            return d != 0 ? d : a.compareTo(b);
+        });
+
+        java.util.LinkedHashSet<String> compact = new java.util.LinkedHashSet<>();
+        outer:
+        for (String n : sorted) {
+            for (String parent : compact) {
+                if (n.equals(parent) || n.startsWith(parent + "/")) {
+                    continue outer;
+                }
+            }
+            compact.add(n);
+        }
+        return compact;
+    }
+
+    private static boolean intersectsByPrefix(String a, String b) {
+        return a.equals(b)
+                || a.startsWith(b + "/")
+                || b.startsWith(a + "/");
     }
 
     private static String pathPredicate(Set<String> roots, ArrayList<String> args) {
