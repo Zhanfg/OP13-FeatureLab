@@ -79,7 +79,7 @@ public class MainHook extends XposedModule implements HookLogger {
             // Gallery-only hooks and state.
             MediaQueryFilter.sAppClassLoader = cl;
             installGalleryHooks(cl);
-            startHiddenIdIndexer(cl);
+            startRuntimeServices(cl);
             return;
         }
 
@@ -363,7 +363,7 @@ public class MainHook extends XposedModule implements HookLogger {
      * 目的：相册首帧若用不带 _data 的轻量查询（[_id]）也能被过滤 → 消除"一闪而过"。
      * 轮询最多 ~5s；拿不到 Application 则跳过（后续带 _data 查询仍会实时增量过滤）。
      */
-    private void startHiddenIdIndexer(ClassLoader cl) {
+    private void startRuntimeServices(ClassLoader cl) {
         Thread t = new Thread(() -> {
             Object app = null;
             for (int i = 0; i < 100 && app == null; i++) {
@@ -385,13 +385,11 @@ public class MainHook extends XposedModule implements HookLogger {
             }
             if (app instanceof android.content.Context) {
                 MediaQueryFilter.sAppContext = (android.content.Context) app;
-                MediaQueryFilter.buildHiddenIdIndex((android.content.Context) app);
-                MediaQueryFilter.startNomediaWatcher((android.content.Context) app);   // v1.6
-                // v1.3.0: 启动兜底清洗——冷启动时把已存在 .nomedia 目录的 local_media
-                //         残留行删掉(不重开相册也隐藏)；watcher 管后续新增。同一后台线程。
-                MediaQueryFilter.purgeLocalMediaForHiddenDirs((android.content.Context) app);
-                MediaQueryFilter.markGallerySyncDirty();
-                MediaQueryFilter.driveGallerySyncIfNeeded();
+
+                // Fast-path architecture: never full-scan MediaStore/local_media during Gallery
+                // startup. Visibility is pushed into provider SQL and .nomedia changes are handled
+                // incrementally by the watcher.
+                MediaQueryFilter.startNomediaWatcher((android.content.Context) app);
             } else {
                 // #ifdef DEBUG
                 if (BuildConfig.DEBUG) {
@@ -399,7 +397,7 @@ public class MainHook extends XposedModule implements HookLogger {
                 }
                 // #endif
             }
-        }, "nomedia-id-indexer");
+        }, "gallery-guard-runtime");
         t.setDaemon(true);
         t.start();
     }
@@ -461,79 +459,40 @@ public class MainHook extends XposedModule implements HookLogger {
     static class GalleryQueryHooker implements XposedInterface.Hooker {
         private final String name;
         private int count;
-        private static int sFiltered;
-        GalleryQueryHooker(String name) { this.name = name; }
+
+        GalleryQueryHooker(String name) {
+            this.name = name;
+        }
 
         @Override public Object intercept(XposedInterface.Chain chain) throws Throwable {
-            // 预索引/purge 线程自己的查询：直接放行，避免递归过滤(否则 purge 看不到要删的隐藏行)
-            if (Boolean.TRUE.equals(MediaQueryFilter.sIndexing.get())) return chain.proceed();
+            if (Boolean.TRUE.equals(MediaQueryFilter.sIndexing.get())) {
+                return chain.proceed();
+            }
 
-            // ① 先看 uri 是否相册自建 local_media（v1.4 第二通道过滤目标）
             Object o0 = chain.getArg(0);
             boolean isLocalMedia = o0 instanceof Uri
-                && MediaQueryFilter.isGalleryLocalMediaUri((Uri) o0);
-            Object o1 = chain.getArg(1);
-            String[] projection = (o1 instanceof String[]) ? (String[]) o1 : null;
-            boolean hasData = MediaQueryFilter.hasDataColumn(projection);
+                    && MediaQueryFilter.isGalleryLocalMediaUri((Uri) o0);
 
-            Object result = chain.proceed();
-
-            // ② 是 local_media 且投影含 _data → 真正过滤（.nomedia 目录行剔除）
-            //    注意 feedIdIndex=false：local_media._id 不是 MediaStore._id，禁止喂入 sHiddenIds
-            if (isLocalMedia && hasData && result instanceof android.database.Cursor) {
-                android.database.Cursor raw = (android.database.Cursor) result;
-                long t0 = System.currentTimeMillis();
-                int before = raw.getCount();
-                MediaQueryFilter.FilteringCursor filtered =
-                    new MediaQueryFilter.FilteringCursor(raw, MediaQueryFilter.FilteringCursor.MODE_DATA, false);
-                int after = filtered.getCount();
-                long cost = System.currentTimeMillis() - t0;
-                // #ifdef DEBUG
+            if (!isLocalMedia) {
                 if (BuildConfig.DEBUG) {
-                    if (filtered.hiddenCount() > 0) {
-                        sFiltered++;
-                        Debug.d(TAG, "GPQ-FILTER[生效] #" + (++count) + " " + name
-                            + " uri=" + o0 + " 行数 " + before + "→" + after
-                            + " 隐藏 " + filtered.hiddenCount() + " 例: " + filtered.hiddenSample()
-                            + " (" + cost + "ms)");
-                    } else if (count <= 60 || count % 200 == 0) {
-                        Debug.d(TAG, "GPQ-FILTER[无隐藏] #" + (++count) + " " + name
-                            + " uri=" + o0 + " 行数=" + before + " (" + cost + "ms)");
+                    count++;
+                    if (count <= 20 || count % 250 == 0) {
+                        Debug.d(TAG, "GPQ[pass] #" + count + " " + name + " uri=" + o0);
                     }
                 }
-                // #endif
-                return filtered;
+                return chain.proceed();
             }
 
-            // ③ 其它 gallery 查询：纯探针日志（仅 debug），原样放行
-            // #ifdef DEBUG
             if (BuildConfig.DEBUG) {
                 count++;
-                if (count <= 60 || count % 200 == 0) {
-                    try {
-                        String proj = "";
-                        if (o1 instanceof String[]) {
-                            String[] arr = (String[]) o1;
-                            StringBuilder sb = new StringBuilder("[");
-                            int max = Math.min(arr.length, 12);
-                            for (int i = 0; i < max; i++) {
-                                if (i > 0) sb.append(",");
-                                sb.append(arr[i]);
-                            }
-                            if (arr.length > max) sb.append(",...").append(arr.length);
-                            proj = sb.append("]").toString();
-                        }
-                        String rows = "?";
-                        if (result instanceof android.database.Cursor) {
-                            rows = String.valueOf(((android.database.Cursor) result).getCount());
-                        }
-                        Debug.d(TAG, "GPQ[probe] #" + count + " " + name
-                            + " uri=" + o0 + " proj=" + proj + " rows=" + rows);
-                    } catch (Throwable ignored) {}
+                if (count <= 20 || count % 100 == 0) {
+                    Debug.d(TAG, "GPQ[PUSHDOWN] #" + count + " " + name + " uri=" + o0);
                 }
             }
-            // #endif
-            return result;
+
+            // If ContentResolver already injected the policy, sPushdownActive makes this a no-op.
+            // Direct in-process provider calls still receive the same SQL predicate here.
+            return MediaQueryFilter.proceedWithVisibilityPushdown(chain);
         }
     }
 
