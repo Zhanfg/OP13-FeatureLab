@@ -249,6 +249,13 @@ public final class VisibilityPolicy {
         return compact;
     }
 
+    public static Set<String> explicitPassthroughRootSnapshot() {
+        java.util.LinkedHashSet<String> roots = new java.util.LinkedHashSet<>();
+        roots.addAll(passthroughDirs);
+        roots.addAll(appPassthroughRoots);
+        return roots;
+    }
+
     public static Set<String> passthroughSnapshot() {
         return new HashSet<>(passthroughDirs);
     }
