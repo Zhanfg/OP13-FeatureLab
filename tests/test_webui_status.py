@@ -139,7 +139,10 @@ class WebUIStaticTests(unittest.TestCase):
         lowered = text.lower()
         for forbidden in ("mockrun", "mock success", "fake device", "demo success"):
             self.assertNotIn(forbidden, lowered)
-        self.assertIn('await import("kernelsu")', text)
+        self.assertNotIn('import("kernelsu")', text)
+        self.assertIn("globalThis.ksu", text)
+        self.assertIn("bridge.moduleInfo", text)
+        self.assertIn("__FEATURELAB_RC__=", text)
         self.assertIn("result.errno", text)
         self.assertIn("mutation_enabled", text)
         self.assertNotIn("mountctl.sh apply", text)

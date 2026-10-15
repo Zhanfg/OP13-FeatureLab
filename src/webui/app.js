@@ -4,6 +4,7 @@ import { MODULE_ID, STATUS_BRIDGE } from "./runtime-config.js";
 const $ = (id) => document.getElementById(id);
 const fatal = $("fatal");
 const content = $("content");
+const RC_MARKER = "__FEATURELAB_RC__=";
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'\\''`)}'`;
@@ -23,6 +24,57 @@ function validateStatus(value) {
   if (!value || value.schema !== 1 || value.ok !== true || value.read_only !== true) throw new Error("状态桥返回格式无效");
   if (value.capabilities?.mutation_enabled !== false) throw new Error("状态桥未处于只读模式");
   return value;
+}
+
+function getKsuBridge() {
+  const bridge = globalThis.ksu;
+  if (!bridge || typeof bridge.exec !== "function") {
+    throw new Error("KernelSU WebUI bridge 不可用（未找到 window.ksu.exec）");
+  }
+  return bridge;
+}
+
+function bridgeExec(bridge, command) {
+  const wrapped = `${command} 2>&1; rc=$?; printf '\\n${RC_MARKER}%s\\n' "$rc"`;
+  let raw;
+  try {
+    raw = String(bridge.exec(wrapped) ?? "");
+  } catch (error) {
+    throw new Error(`KernelSU exec bridge 调用失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+  const pattern = new RegExp(`(?:^|\\n)${RC_MARKER}(\\d+)\\s*$`);
+  const match = raw.match(pattern);
+  if (!match || match.index === undefined) throw new Error("KernelSU exec bridge 未返回退出码标记");
+  const output = raw.slice(0, match.index).replace(/\n$/, "");
+  return { errno: Number(match[1]), stdout: output };
+}
+
+function validateModulePath(path) {
+  const value = String(path ?? "").trim();
+  if (!/^\/data\/adb\/modules\/[A-Za-z0-9._-]+$/.test(value)) throw new Error("模块路径验证失败");
+  return value;
+}
+
+function locateModule(bridge) {
+  if (!/^[A-Za-z0-9._-]+$/.test(MODULE_ID)) throw new Error("模块 ID 配置无效");
+
+  if (typeof bridge.moduleInfo === "function") {
+    try {
+      const info = JSON.parse(String(bridge.moduleInfo() ?? "{}"));
+      if (info.id && info.id !== MODULE_ID) throw new Error("KernelSU 返回了不同的模块 ID");
+      if (info.moduleDir) return validateModulePath(info.moduleDir);
+    } catch (error) {
+      if (error instanceof Error && /不同的模块 ID/.test(error.message)) throw error;
+      // Older/forked managers may not expose moduleInfo reliably; fall through
+      // to the read-only shell lookup below.
+    }
+  }
+
+  const expected = shellQuote(MODULE_ID);
+  const command = `for d in /data/adb/modules/*; do [ -f "$d/module.prop" ] || continue; mid="$(sed -n 's/^id=//p' "$d/module.prop" | head -n 1)"; [ "$mid" = ${expected} ] || continue; printf '%s\\n' "$d"; exit 0; done; exit 44`;
+  const result = bridgeExec(bridge, command);
+  if (result.errno !== 0) throw new Error(`未找到已安装模块（errno ${result.errno}）`);
+  return validateModulePath(result.stdout);
 }
 
 function hslFromHex(hex) {
@@ -69,7 +121,7 @@ function render(status) {
   setText("theme-source", `取色 ${status.theme.source}`);
   setText("module-line", `${status.module.id} · ${status.module.version} (${status.module.version_code})`);
   setText("runtime-status", status.runtime.status);
-  setText("runtime-detail", `${status.runtime.active_mounts} 个挚载 · namespace ${status.runtime.namespace}`);
+  setText("runtime-detail", `${status.runtime.active_mounts} 个挂载 · namespace ${status.runtime.namespace}`);
   setText("property-status", status.properties.status);
   setText("property-detail", `${status.properties.active_properties} 个属性 · ${status.properties.reboot_required ? "需重启" : "无需重启标记"}`);
   setText("integrity-status", status.integrity.status);
@@ -109,28 +161,16 @@ function render(status) {
   content.classList.remove("hidden");
 }
 
-async function locateModule(exec) {
-  if (!/^[A-Za-z0-9._-]+$/.test(MODULE_ID)) throw new Error("模块 ID 配置无效");
-  const expected = shellQuote(MODULE_ID);
-  const command = `for d in /data/adb/modules/*; do [ -f "$d/module.prop" ] || continue; mid="$(sed -n 's/^id=//p' "$d/module.prop" | head -n 1)"; [ "$mid" = ${expected} ] || continue; printf '%s\\n' "$d"; exit 0; done; exit 44`;
-  const result = await exec(command);
-  if (Number(result.errno) !== 0) throw new Error(`未找到已安装模块（errno ${result.errno}）`);
-  const path = String(result.stdout ?? "").trim();
-  if (!/^\/data\/adb\/modules\/[A-Za-z0-9._-]+$/.test(path)) throw new Error("模块路径验证失败");
-  return path;
-}
-
 async function loadStatus() {
   $("refresh").disabled = true;
   try {
-    const api = await import("kernelsu");
-    if (typeof api.exec !== "function") throw new Error("KernelSU exec API 不可用");
-    const modulePath = await locateModule(api.exec);
+    const bridge = getKsuBridge();
+    const modulePath = locateModule(bridge);
     if (!/^[A-Za-z0-9_./-]+$/.test(STATUS_BRIDGE)) throw new Error("状态桥配置无效");
-    const result = await api.exec(`sh ${shellQuote(`${modulePath}/${STATUS_BRIDGE}`)} status`);
-    if (Number(result.errno) !== 0) throw new Error(`状态桥执行失败（errno ${result.errno}）`);
+    const result = bridgeExec(bridge, `sh ${shellQuote(`${modulePath}/${STATUS_BRIDGE}`)} status`);
+    if (result.errno !== 0) throw new Error(`状态桥执行失败（errno ${result.errno}）：${result.stdout || "无输出"}`);
     let parsed;
-    try { parsed = JSON.parse(String(result.stdout ?? "")); }
+    try { parsed = JSON.parse(result.stdout); }
     catch { throw new Error("状态桥未返回有效 JSON"); }
     render(validateStatus(parsed));
   } catch (error) {
