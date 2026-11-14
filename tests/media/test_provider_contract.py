@@ -62,6 +62,14 @@ class ProviderContractTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("namespace=visible", result.stderr)
 
+    def test_unhashable_edge_type_fails_closed(self):
+        value = self.base()
+        value["edges"][0]["edge_type"] = ["elf-shared-object"]
+        result = self.run_tool(value)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("[FAIL]", result.stderr)
+        self.assertIn("edge_type is invalid", result.stderr)
+
     def test_observed_closure_requires_runtime_resolution(self):
         value = self.base()
         value["closures"]["observed_runtime"] = ["xml:codec-include"]

@@ -69,7 +69,7 @@ def validate_edge(row: object, index: int) -> tuple[str, str]:
     edge_type = row.get("edge_type")
     if not isinstance(edge_id, str) or not edge_id:
         fail(f"{label}.edge_id must be non-empty")
-    if edge_type not in EDGE_TYPES:
+    if not isinstance(edge_type, str) or edge_type not in EDGE_TYPES:
         fail(f"{label}.edge_type is invalid")
     for key in ("consumer", "requirement"):
         if not isinstance(row.get(key), str) or not row[key].strip():
@@ -77,7 +77,7 @@ def validate_edge(row: object, index: int) -> tuple[str, str]:
     require_hash_list(row.get("evidence_sha256"), f"{label}.evidence_sha256")
 
     resolution = row.get("resolution")
-    if resolution not in {"static-resolved", "declarative-resolved", "observed-runtime", "unresolved", "candidate"}:
+    if not isinstance(resolution, str) or resolution not in {"static-resolved", "declarative-resolved", "observed-runtime", "unresolved", "candidate"}:
         fail(f"{label}.resolution is invalid")
 
     if edge_type in ELF_EDGES:
@@ -236,6 +236,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, TypeError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
         print(f"[FAIL] {exc}", file=sys.stderr)
         raise SystemExit(2)
